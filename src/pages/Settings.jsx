@@ -804,6 +804,7 @@ export default function Settings() {
 
   const checkDuplicates = async () => {
     setDuplicateMessage('')
+    setMergeAllResult(null)
     const d = await api.checkDuplicates()
     setDups(Array.isArray(d) ? d : [])
     setShowDups(true)
@@ -3077,9 +3078,9 @@ activeCategory === 'data' ? usersTried
               <Zap size={14} />
               {mergingAll ? t('Merging...') : t('Smart Merge All')}
             </button>
-            {mergeAllResult && (
-              <p className={`text-xs mt-2 ${mergeAllResult.error ? 'text-red-400' : 'text-accent'}`}>
-                {mergeAllResult.error ? t('Error: {error}', { error: t(mergeAllResult.error) }) : t('✓ Merged {tracks} tracks across {groups} groups', { tracks: mergeAllResult.merged, groups: mergeAllResult.groups })}
+            {mergeAllResult && !mergeAllResult.error && (
+              <p className="text-xs mt-2 text-accent">
+                {t('✓ Merged {tracks} tracks across {groups} groups', { tracks: mergeAllResult.merged, groups: mergeAllResult.groups })}
               </p>
             )}
           </div>
@@ -3123,7 +3124,7 @@ activeCategory === 'data' ? usersTried
                 <li>{t("• +3 points if has year")}</li>
                 <li>{t("• +2 points if has genre")}</li>
               </ul>
-              <p className="mt-2">{t("The highest scoring copy wins. Missing metadata is filled from the other copies, then their audio files are removed from your music folder (Trash on desktop; permanently deleted in web mode).")}</p>
+              <p className="mt-2">{t("An existing audio file is kept ahead of a missing copy; among available copies, the highest score wins. Missing metadata is filled from the other copies. Separate duplicate files go to Trash on desktop and are permanently deleted in web mode. Shared audio is kept.")}</p>
             </div>
           </div>
           <div className="flex gap-2">

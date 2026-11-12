@@ -1,0 +1,39 @@
+name: Duplicate library merge regression
+
+on:
+  pull_request:
+    paths:
+      - 'electron/ipc/mergeDuplicates.js'
+      - 'electron/ipc/trackFiles.js'
+      - 'electron/libraryFolder.js'
+      - 'scripts/library-duplicates.test.mjs'
+      - '.github/workflows/library-duplicates-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  duplicates:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm rebuild better-sqlite3
+      - name: Check duplicate merge syntax
+        run: node --check electron/ipc/mergeDuplicates.js
+      - name: Check file staging, rollback, path aliases, and configured library roots
+        env:
+          # Node tests import the bridge; they do not run the Electron binary.
+          ELECTRON_OVERRIDE_DIST_PATH: ${{ runner.temp }}/unused-electron
+        run: node --test scripts/library-duplicates.test.mjs
