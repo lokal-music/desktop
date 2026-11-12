@@ -43,7 +43,18 @@ export async function downloadGhostSongs(ghosts, { client = api, save = saveToLi
     if (!isCurrent()) return
     try {
       if (owned[index]?.id) {
-        const swapped = await client.resolveGhostTrack(ghost.id, owned[index].id, { requireMetadataMatch: true, dedupePlaylist: true, allowDurationMismatch: true })
+        const mismatch = differentDuration(ghost, owned[index])
+        if (mismatch && !confirmDuration) {
+          result.existing++
+          result.lengthReview = (result.lengthReview || 0) + 1
+          return
+        }
+        if (mismatch && await confirmDuration(ghost, owned[index]) !== true) {
+          result.declined = (result.declined || 0) + 1
+          return // Already owned: never queue another copy while awaiting a length decision.
+        }
+        if (!isCurrent()) return
+        const swapped = await client.resolveGhostTrack(ghost.id, owned[index].id, { requireMetadataMatch: true, dedupePlaylist: true, ...(mismatch ? { allowDurationMismatch: true } : {}) })
         if (swapped?.ok) result.existing++
         else result.failed++
         return
@@ -116,7 +127,7 @@ export async function downloadGhostSongs(ghosts, { client = api, save = saveToLi
 }
 
 /** What downloadGhostSongs did, in a sentence. */
-export function ghostDownloadMessage({ started, existing, failed, notFound, cancelled, declined }) {
+export function ghostDownloadMessage({ started, existing, failed, notFound, cancelled, declined, lengthReview }) {
   return [
     cancelled && 'Stopped queuing songs',
     started && `Started ${started} download${started === 1 ? '' : 's'}`,
@@ -124,6 +135,7 @@ export function ghostDownloadMessage({ started, existing, failed, notFound, canc
     notFound && `${notFound} not found on your playback sources`,
     failed && `${failed} unavailable`,
     declined && `${declined} skipped`,
+    lengthReview && `${lengthReview} owned cop${lengthReview === 1 ? 'y has' : 'ies have'} a different length; choose a copy to relink`,
   ].filter(Boolean).join('; ') || 'No songs to download.'
 }
 

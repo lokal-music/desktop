@@ -7,7 +7,7 @@ globalThis.localStorage = globalThis.localStorage || { getItem: () => null, setI
 
 const { downloadGhostSongs, ghostDownloadMessage, redownloadMissingTrack } = await import('../src/ghostDownloads.js')
 const { downloadMissingProviderTracks } = await import('../src/ghostDownloads.js')
-const { relinkMergedPlayerState } = await import('../src/mergedTracks.js')
+const { relinkMergedPlayerState, mergedPlaybackContinuation, reuseMergedAudio } = await import('../src/mergedTracks.js')
 
 const imported = (i) => ({ id: `g${i}`, title: `Song ${i}`, artist: `Artist ${i}`, file_path: `ghost://spotify/pl-1/g${i}` })
 
@@ -67,6 +67,36 @@ test('merged track IDs are relinked throughout the loaded player without changin
   for (const key of ['queue', 'originalQueue', 'shuffleQueue']) assert.equal(patch[key][0].id, 'kept')
   for (const key of ['playHistory', 'futureHistory', 'playNextIds']) assert.deepEqual(patch[key], ['kept'])
   assert.equal(state.queue[0].id, 'old', 'cached inputs are not mutated')
+})
+
+for (const decision of [undefined, false, true]) {
+  test(`an owned different-length recording is never downloaded again; relinking decision: ${decision}`, async () => {
+    const c = client()
+    const ghost = { ...imported(1), duration: 180 }
+    c.findOwnedTracks = async () => [{ id: 'owned', title: ghost.title, artist: ghost.artist, duration: 360, file_path: '/Music/song.flac' }]
+    const result = await downloadGhostSongs([ghost], { client: c,
+      ...(decision === undefined ? {} : { confirmDuration: async () => decision }),
+      save: () => assert.fail('Never download another copy of an owned recording'),
+    })
+    assert.equal(result.started, 0)
+    assert.equal(c.swaps.length, decision === true ? 1 : 0)
+    if (decision === undefined) assert.equal(result.lengthReview, 1)
+    if (decision === false) assert.equal(result.declined, 1)
+  })
+}
+
+test('merging the playing record preserves its position and reuses the same physical audio source', () => {
+  const state = { currentTrack: { id: 'old' }, progress: 42, playbackGeneration: 7 }
+  const replacements = [{ removedIds: ['old'], unchangedFileIds: ['old'], track: { id: 'kept' } }]
+  const continuation = mergedPlaybackContinuation(state, replacements)
+  const audio = { dataset: { lokalTrackId: 'old' }, currentSrc: '/api/stream/old', readyState: 4, currentTime: 42,
+    pause: () => assert.fail('Do not pause the shared source'), load: () => assert.fail('Do not reload the shared source') }
+  assert.equal(reuseMergedAudio(audio, continuation), true)
+  assert.equal(audio.currentTime, 42)
+  assert.equal(audio.dataset.lokalTrackId, 'kept')
+  assert.equal(continuation.position, 42)
+  assert.equal(state.playbackGeneration, 7)
+  assert.equal(reuseMergedAudio(audio, { ...continuation, sameSource: false }), false)
 })
 
 test('each imported ghost is found on the playback sources and downloaded to take its place', async () => {

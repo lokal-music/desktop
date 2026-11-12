@@ -148,8 +148,8 @@ for (const [title, main, credits] of [
     }
     const options = { client, save: () => assert.fail('Already-owned songs must not start downloads') }
     assert.equal((await downloadMissingProviderTracks([{ title, artist: credits, duration: 220 }], options)).existing, 1)
-    const ghost = { id: 'imported', title, artist: credits, duration: 220, file_path: 'ghost://spotify/imported' }
-    db.prepare('INSERT INTO tracks (id,file_path,file_hash,title,artist,duration) VALUES (?,?,?,?,?,?)').run(ghost.id, ghost.file_path, ghost.id, title, credits, 220)
+    const ghost = { id: 'imported', title, artist: credits, duration: 3, file_path: 'ghost://spotify/imported' }
+    db.prepare('INSERT INTO tracks (id,file_path,file_hash,title,artist,duration) VALUES (?,?,?,?,?,?)').run(ghost.id, ghost.file_path, ghost.id, title, credits, 3)
     db.exec("INSERT INTO playlists (id,name) VALUES ('saved','Saved'); INSERT INTO playlist_tracks (playlist_id,track_id,position) VALUES ('saved','imported',0)")
     assert.equal((await downloadGhostSongs([ghost], options)).existing, 1)
     assert.equal(db.prepare('SELECT track_id FROM playlist_tracks').get().track_id, first.indexedTracks[0].id)
@@ -186,8 +186,41 @@ test('bulk merge groups contributor variants and relinks every playlist to the p
   assert.equal(result.replacements[0].track.id, keeper)
   assert.equal(db.prepare('SELECT track_id FROM track_aliases WHERE old_id=?').get('other').track_id, keeper)
   assert.equal(require('../electron/trackAlias').trackById(db, 'other').id, keeper, 'cached playback IDs still resolve after the merge')
+  const handlers = new Map()
+  require('../electron/ipc/scanner').registerV4Handlers({ handle: (name, callback) => handlers.set(name, callback) })
+  handlers.get('scanner:incrementPlayTime')(null, 'other', 'guest', 45)
+  assert.equal(db.prepare('SELECT track_id FROM play_history').get().track_id, keeper, 'the active listening session follows the retained track')
   assert.equal(fs.existsSync(job.filepaths[0]), true)
   assert.deepEqual(db.pragma('foreign_key_check'), [])
+})
+
+test('exact title/main-artist groups retain different-length copies during automatic cleanup', async t => {
+  const { db, root, audio, download, finish } = fixture(t)
+  const first = download(audio())
+  await finish(first)
+  const longer = path.join(root, 'longer.flac')
+  fs.copyFileSync(first.filepaths[0], longer)
+  db.prepare('INSERT INTO tracks (id,file_path,file_hash,title,artist,duration) VALUES (?,?,?,?,?,?)').run('longer', longer, 'longer', 'Song', 'Artist, Guest', 360)
+  db.prepare('UPDATE tracks SET duration=180 WHERE id=?').run(first.indexedTracks[0].id)
+  assert.equal(exactDuplicateGroups(db).length, 1, 'title and main artist determine the exact group')
+  const result = await mergeAllDuplicates(db, () => 1)
+  assert.equal(result.merged, 0)
+  assert.match(result.warning, /Different-length/)
+  assert.equal(fs.existsSync(longer), true)
+  assert.equal(fs.existsSync(first.filepaths[0]), true)
+})
+
+test('merge identifies a shared physical source so playing audio need not reload', async t => {
+  const { db, root, audio, download, finish } = fixture(t)
+  const first = download(audio())
+  await finish(first)
+  const link = path.join(root, 'linked.flac')
+  fs.linkSync(first.filepaths[0], link)
+  db.prepare('INSERT INTO tracks (id,file_path,file_hash,title,artist,duration) VALUES (?,?,?,?,?,?)').run('link', link, 'link', 'Song', 'Artist', 3)
+  const result = await require('../electron/ipc/mergeDuplicates').mergeDuplicates(db, first.indexedTracks[0].id, ['link'])
+  assert.equal(result.ok, true, result.error)
+  assert.deepEqual(result.replacements[0].unchangedFileIds, ['link'])
+  assert.equal(fs.existsSync(first.filepaths[0]), true)
 })
 
 test('Windows path aliases cannot create sourced and unsourced rows for one audio file', { skip: process.platform !== 'win32' }, async t => {

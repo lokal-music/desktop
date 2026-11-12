@@ -17,3 +17,19 @@ export function announceTrackMerges(result) {
   window.dispatchEvent(new Event('lokal:refresh'))
   return result
 }
+
+export function mergedPlaybackContinuation(state, replacements, position = state.progress) {
+  const replacement = replacements?.find(item => item.removedIds?.includes(state.currentTrack?.id))
+  if (!replacement?.track) return null
+  return { trackId: replacement.track.id,
+    sameSource: replacement.unchangedFileIds?.includes(state.currentTrack.id) === true,
+    position: Math.max(0, Number(position) || 0) }
+}
+
+export function reuseMergedAudio(element, continuation) {
+  if (!continuation?.sameSource || !element?.currentSrc || element.readyState < 2) return false
+  element.dataset.lokalTrackId = String(continuation.trackId)
+  element.dataset.lokalTrackPending = ''
+  element.dataset.fallbackPending = ''
+  return true
+}

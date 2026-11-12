@@ -1,4 +1,4 @@
-import { relinkMergedPlayerState } from './mergedTracks.js'
+import { relinkMergedPlayerState, mergedPlaybackContinuation, reuseMergedAudio } from './mergedTracks.js'
 import { clearPageCache } from './pageCache.js'
 import { NativeAudioBridge, readOutputPreferences, saveOutputPreferences } from './audio/nativeOutput'
 import { createEqualizerRack, loadImpulseFile } from './audio/equalizerGraph.mjs'
@@ -98,7 +98,7 @@ import { continueFlow, flowNeedsMore } from './flow/session'
 import { buildRadio } from './radioActions'
 import { autoplayEnabled, shouldTopUpRelated } from './queueAutoplay'
 import { playbackSpeed, usePlaybackSpeed } from './playbackSpeed.mjs'
-import { useCastPlayback, takeResumePosition } from './cast/useCastPlayback'
+import { useCastPlayback, takeResumePosition, rememberResumePosition } from './cast/useCastPlayback'
 import { readSavedRoute, writeSavedRoute, readViewState, writeViewState, statePersistenceEnabled } from './statePersistence.mjs'
 
 async function addonStreamTrackHash(id) {
@@ -437,9 +437,19 @@ function ViewStateRecorder() {
 
 /** The app shell: header, sidebar, pages, side panels, player and overlays. */
 export default function App() {
+  const mergedPlaybackRef = useRef(null)
   useEffect(() => {
     const merged = event => {
-      usePlayerStore.setState(state => relinkMergedPlayerState(state, event.detail))
+      const state = usePlayerStore.getState()
+      const patch = relinkMergedPlayerState(state, event.detail)
+      if (patch.currentTrack?.id && patch.currentTrack.id !== state.currentTrack?.id) {
+        const position = audioRef.current?.currentTime > 0 ? audioRef.current.currentTime : state.progress
+        mergedPlaybackRef.current = mergedPlaybackContinuation(state, event.detail, position)
+        rememberResumePosition(patch.currentTrack.id, position)
+        currentTrackRef.current = patch.currentTrack
+        if (prevTrackIdRef.current === state.currentTrack.id) prevTrackIdRef.current = patch.currentTrack.id
+      }
+      usePlayerStore.setState(patch)
       clearPageCache()
     }
     window.addEventListener('lokal:tracks-merged', merged)
@@ -2914,6 +2924,15 @@ export default function App() {
   }, [flushTime, setActiveAudioElement, beginLastfmPlayback, cancelCrossfade, stopTimer, autoNext, openMixFilters, applyReplayGainToElement, preparedStemFor])
 
   useEffect(() => {
+    const mergedPlayback = mergedPlaybackRef.current
+    if (mergedPlayback?.trackId === currentTrack?.id) {
+      mergedPlaybackRef.current = null
+      const el = audioRef.current
+      if (!isCrossfadingRef.current && !castActive && !currentTrack.atmosNative && reuseMergedAudio(el, mergedPlayback)) {
+        takeResumePosition(currentTrack.id)
+        return
+      }
+    }
     if (isCrossfadingRef.current) {
       if (castActive || !(currentTrack?.id && currentTrack.id === expectedCrossfadeTrackIdRef.current)) cancelCrossfade()
       else return

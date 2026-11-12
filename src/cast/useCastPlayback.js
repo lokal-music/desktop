@@ -23,6 +23,7 @@ const SEEK_SETTLE_MS = 150
 
 // Where the song was when casting ended: this computer carries on from there.
 let resumeAt = null
+export function rememberResumePosition(trackId, position) { resumeAt = { trackId, position: Math.max(0, Number(position) || 0) } }
 export function takeResumePosition(trackId) {
   const pending = resumeAt
   resumeAt = null

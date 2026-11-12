@@ -22,6 +22,7 @@ const availableFile = track => {
 // interleave with them. A failed transaction restores every staged audio file.
 async function mergeDuplicates(db, keepId, removeIds) {
   const staged = []
+  const unchangedFileIds = []
   let losers
   try {
     if (!Array.isArray(removeIds) || removeIds.includes(keepId)) throw new Error('Choose a different copy to remove.')
@@ -35,6 +36,7 @@ async function mergeDuplicates(db, keepId, removeIds) {
     const files = new Map()
     for (const loser of losers) {
       const file = loser.file_path
+      if (require('../libraryPathIdentity').sameFile(file, winner.file_path)) unchangedFileIds.push(loser.id)
       const real = realPath(file)
       if (!real) continue // Ghosts and already missing files have nothing to delete.
       if (fs.lstatSync(file).isSymbolicLink()) throw new Error('A duplicate is a symbolic link. Remove it manually so its original audio file is not left behind.')
@@ -110,7 +112,7 @@ async function mergeDuplicates(db, keepId, removeIds) {
   }
   return {
     ok: true, merged: losers.length,
-    replacements: [{ removedIds: losers.map(track => track.id), track: db.prepare('SELECT * FROM tracks WHERE id=?').get(keepId) }],
+    replacements: [{ removedIds: losers.map(track => track.id), unchangedFileIds, track: db.prepare('SELECT * FROM tracks WHERE id=?').get(keepId) }],
     ...(failed.length ? { warning: `Duplicates were removed from the library, but some files could not be moved to Trash. They will not be rescanned. Remove these files manually: ${failed.join(', ')}` } : {}),
   }
 }
@@ -127,7 +129,10 @@ async function mergeAllDuplicates(db, scoreTrack) {
     const { tierRank } = require('../duplicateGroups')
     tracks.sort((a, b) => Number(available.has(b.id)) - Number(available.has(a.id)) || tierRank(b) - tierRank(a) || (b.playlist_count || 0) - (a.playlist_count || 0) || scoreTrack(b) - scoreTrack(a))
     if (tracks.length < 2) continue
-    const result = await mergeDuplicates(db, tracks[0].id, tracks.slice(1).map(track => track.id))
+    const compatible = tracks.slice(1).filter(track => require('../recordingIdentity').sameRecording(tracks[0], track, 10))
+    if (compatible.length < tracks.length - 1) warnings.push(`Different-length copies of ${tracks[0].title} were kept for individual review.`)
+    if (!compatible.length) continue
+    const result = await mergeDuplicates(db, tracks[0].id, compatible.map(track => track.id))
     merged += result.merged || 0
     replacements.push(...(result.replacements || []))
     if (result.error) errors.push(result.error)

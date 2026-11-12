@@ -607,8 +607,8 @@ async function scanFolder(folderPath, {
             // that disappears after disconnect. Make a durable copy once.
             const durable = await getDurableFolderArtwork(folderArtwork)
             if (durable) {
-              db.prepare('UPDATE tracks SET artwork_path = ? WHERE file_path = ?')
-                .run(durable, filePath)
+              db.prepare('UPDATE tracks SET artwork_path = ? WHERE id = ?')
+                .run(durable, existing.id)
             }
           }
           // Local folder art is already its full original: never downgrade it.
@@ -620,8 +620,8 @@ async function scanFolder(folderPath, {
           // update; no audio file rescan or metadata rewrite is needed.
           if (!networkArtwork && hasCachedArtwork && folderArtwork &&
               isCachedFolderArtwork(existingArtwork)) {
-            db.prepare('UPDATE tracks SET artwork_path = ? WHERE file_path = ?')
-              .run(folderArtwork, filePath)
+            db.prepare('UPDATE tracks SET artwork_path = ? WHERE id = ?')
+              .run(folderArtwork, existing.id)
           } else if (networkArtwork && hasCachedArtwork && folderArtwork &&
               folderOriginalCandidates(existingArtwork).length &&
               !hasFolderOriginal(existingArtwork)) {
@@ -629,8 +629,8 @@ async function scanFolder(folderPath, {
             // companion; repair it once on a reachable share.
             const durable = await getDurableFolderArtwork(folderArtwork)
             if (durable && durable !== existing.artwork_path) {
-              db.prepare('UPDATE tracks SET artwork_path = ? WHERE file_path = ?')
-                .run(durable, filePath)
+              db.prepare('UPDATE tracks SET artwork_path = ? WHERE id = ?')
+                .run(durable, existing.id)
             }
           }
           scanStatus.done++; emitProgress(); continue
@@ -2460,6 +2460,7 @@ function registerV4Handlers(ipcMain) {
   ipcMain.handle('scanner:incrementPlayTime', (_, trackId, userId, seconds) => {
     try {
       const db = getDB()
+      trackId = require('../trackAlias').trackById(db, trackId)?.id || trackId
       const uid = userId || 'guest'
       const thresholdSetting = db.prepare("SELECT value FROM settings WHERE key = 'scrobble_threshold'").get()
       const threshold = thresholdSetting ? parseInt(thresholdSetting.value) : 30
