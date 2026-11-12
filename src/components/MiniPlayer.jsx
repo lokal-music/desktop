@@ -1,7 +1,7 @@
 import { useTranslation } from '../i18n'
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
-import { Play, Pause, SkipBack, SkipForward, X, Volume2, VolumeX, Heart, Clapperboard, Gamepad2, Minimize2, Maximize2, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Play, Pause, SkipBack, SkipForward, X, Minus, Volume2, VolumeX, Heart, Clapperboard, Gamepad2, Minimize2, Maximize2, ChevronLeft, ChevronRight } from 'lucide-react'
 import { usePlayerStore, useAppStore } from '../store/player'
 import { useShallow } from 'zustand/react/shallow'
 import { api, peekSettings, wordSyncEnabled as getWordSyncEnabled } from '../api'
@@ -46,6 +46,9 @@ export default function MiniPlayer({ windowed = false }) {
   const [availablePresets, setAvailablePresets] = useState([])
   const [currentPreset, setCurrentPreset] = useState('')
   const milkDropRef = useRef(null)
+  const [localProg, setLocalProg] = useState(null)
+  const scrubbing = useRef(false)
+  const scrubTarget = useRef(null)
   const enabledPresets = useMemo(
     () => normalizeEnabledMilkDropPresets(visualizerSettings.fullscreen_milkdrop_presets, availablePresets),
     [visualizerSettings.fullscreen_milkdrop_presets, availablePresets],
@@ -268,13 +271,49 @@ export default function MiniPlayer({ windowed = false }) {
   }, [])
 
   const artSrc = trackArtURL(currentTrack)
+  const display = localProg ?? progress
 
+  // Hovering previews the position; audio only seeks while the mouse is held
+  // down, exactly like the main player bar's seek bar.
   const handleScrub = (e) => {
+    if (!duration) return
+    const r = e.currentTarget.getBoundingClientRect()
+    const t = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * duration
+    setLocalProg(t)
+    if (scrubbing.current) {
+      scrubTarget.current = t
+      setProgressWithAudioUpdate(t)
+    }
+  }
+
+  const seekTo = (e) => {
     if (!duration) return
     const r = e.currentTarget.getBoundingClientRect()
     const t = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * duration
     setProgressWithAudioUpdate(t)
   }
+
+  // setProgressWithAudioUpdate writes progress synchronously, so snapping to
+  // the last scrubbed time and clearing the preview here cannot flicker.
+  const endScrub = () => {
+    if (scrubbing.current) {
+      scrubbing.current = false
+      if (scrubTarget.current !== null) setProgressWithAudioUpdate(scrubTarget.current)
+      scrubTarget.current = null
+    }
+    setLocalProg(null)
+  }
+
+  // Pointer capture delivers the release to the bar even outside its bounds;
+  // the window listeners cover a release the element never sees.
+  useEffect(() => {
+    window.addEventListener('pointerup', endScrub)
+    window.addEventListener('mouseup', endScrub)
+    return () => {
+      window.removeEventListener('pointerup', endScrub)
+      window.removeEventListener('mouseup', endScrub)
+    }
+  }, [])
 
   const toggleLike = async () => {
     if (!currentTrack) return
@@ -290,8 +329,8 @@ export default function MiniPlayer({ windowed = false }) {
       exit={{ opacity: 0, y: 20 }}
       ref={miniRootRef}
       className={windowed
-        ? 'relative w-full shrink-0 bg-transparent border border-border rounded-none shadow-none overflow-hidden'
-        : 'fixed bottom-4 right-4 w-72 bg-surface border border-border rounded-2xl shadow-2xl overflow-hidden z-50'}
+        ? 'relative w-full shrink-0 bg-transparent border border-white/10 rounded-none shadow-none overflow-hidden'
+        : 'fixed bottom-4 right-4 w-72 bg-surface/95 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl shadow-black/40 overflow-hidden z-50'}
     >
       {windowed && (
         <>
@@ -311,17 +350,16 @@ export default function MiniPlayer({ windowed = false }) {
       )}
 
       {!showMiniVisualizer && (
-      <div className="flex items-center justify-between px-3 py-2 bg-surface/50 backdrop-blur-sm border-b border-white/10" style={windowed && api.isElectron ? { WebkitAppRegion: 'drag' } : undefined}>
+      <div className="flex items-center gap-1 px-3 py-2 bg-surface/60 backdrop-blur-sm border-b border-white/10" style={windowed && api.isElectron ? { WebkitAppRegion: 'drag' } : undefined}>
         <span className="min-w-0 flex-1 truncate pr-2 text-xs text-muted font-medium">{videoMode && currentTrack ? <><span className="text-white/90">{currentTrack.title}</span>{currentTrack.artist ? ` · ${currentTrack.artist}` : ''}</> : 'Mini Player'}</span>
-        {(musicVideo?.videoId || videoMode) && <button onClick={toggleVideo} aria-pressed={videoMode} aria-label={videoMode ? 'Show artwork' : 'Show music video'} style={windowed && api.isElectron ? { WebkitAppRegion: 'no-drag' } : undefined} className="inline-flex items-center gap-1 text-[10px] text-muted hover:text-white transition-colors" title={videoMode ? 'Show artwork' : 'Show music video'}><Clapperboard size={13} />{videoMode ? 'Artwork' : 'Video'}</button>}
-        <button onClick={() => setShowMiniVisualizer(true)} title={t('Show visualizer')} aria-label={t('Show visualizer')} style={windowed && api.isElectron ? { WebkitAppRegion: 'no-drag' } : undefined} className="inline-flex items-center gap-1 text-[10px] text-muted hover:text-white transition-colors"><Gamepad2 size={13} /></button>
-        <button
-          onClick={toggleMiniPlayer}
-          className="text-muted hover:text-white transition-colors p-1"
-          style={windowed && api.isElectron ? { WebkitAppRegion: 'no-drag' } : undefined}
-        >
-          <X size={14} />
-        </button>
+        <div className="flex items-center gap-0.5" style={windowed && api.isElectron ? { WebkitAppRegion: 'no-drag' } : undefined}>
+          {(musicVideo?.videoId || videoMode) && <button onClick={toggleVideo} aria-pressed={videoMode} aria-label={videoMode ? 'Show artwork' : 'Show music video'} title={videoMode ? 'Show artwork' : 'Show music video'} className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[10px] text-muted hover:text-white hover:bg-white/10 transition-colors"><Clapperboard size={13} />{videoMode ? 'Artwork' : 'Video'}</button>}
+          <button onClick={() => setShowMiniVisualizer(true)} title={t('Show visualizer')} aria-label={t('Show visualizer')} className="rounded-md p-1.5 text-muted hover:text-white hover:bg-white/10 transition-colors"><Gamepad2 size={13} /></button>
+          {windowed && api.isElectron && (
+            <button onClick={() => api.minimize()} title={t('Minimize')} aria-label={t('Minimize')} className="rounded-md p-1.5 text-muted hover:text-white hover:bg-white/10 transition-colors"><Minus size={13} /></button>
+          )}
+          <button onClick={toggleMiniPlayer} title={t('Exit mini player')} aria-label={t('Exit mini player')} className="rounded-md p-1.5 text-muted hover:text-white hover:bg-white/10 transition-colors"><X size={13} /></button>
+        </div>
       </div>
       )}
 
@@ -345,6 +383,7 @@ export default function MiniPlayer({ windowed = false }) {
             </div>
             <button onClick={() => setShowMiniVisualizer(false)} title={t('Show mini player controls')} aria-label={t('Show mini player controls')} style={windowed && api.isElectron ? { WebkitAppRegion: 'no-drag' } : undefined} className="rounded-md p-1.5 text-white/75 hover:bg-white/15 hover:text-white"><Minimize2 size={14} /></button>
             <button onClick={enterFullscreenVisualizer} title={t('Open full-screen visualizer')} aria-label={t('Open full-screen visualizer')} style={windowed && api.isElectron ? { WebkitAppRegion: 'no-drag' } : undefined} className="rounded-md p-1.5 text-white/75 hover:bg-white/15 hover:text-white"><Maximize2 size={14} /></button>
+            {windowed && api.isElectron && <button onClick={() => api.minimize()} title={t('Minimize')} aria-label={t('Minimize')} style={{ WebkitAppRegion: 'no-drag' }} className="rounded-md p-1.5 text-white/75 hover:bg-white/15 hover:text-white"><Minus size={14} /></button>}
             <button onClick={toggleMiniPlayer} title={t('Close mini player')} aria-label={t('Close mini player')} style={windowed && api.isElectron ? { WebkitAppRegion: 'no-drag' } : undefined} className="rounded-md p-1.5 text-white/75 hover:bg-white/15 hover:text-white"><X size={14} /></button>
           </div>
           <div className="absolute inset-x-0 bottom-0 z-20 flex items-center justify-between gap-1 px-3 py-2.5">
@@ -367,7 +406,7 @@ export default function MiniPlayer({ windowed = false }) {
           {musicVideo?.videoId && <VideoOffsetControl compact videoId={musicVideo.videoId} className="absolute left-2 top-2 opacity-0 transition-opacity duration-200 group-hover/video:opacity-100 has-[:focus-visible]:opacity-100" />}
           {lyricLine && <p className={`pointer-events-none absolute inset-x-3 bottom-2.5 text-center text-[13px] font-medium leading-snug text-white [text-shadow:0_1px_3px_rgba(0,0,0,0.9)] transition-transform duration-200 group-hover/video:-translate-y-[4.25rem] group-has-[:focus-visible]/video:-translate-y-[4.25rem]`}>{lyricLine}</p>}
           <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/55 to-transparent px-3 pb-2 pt-6 opacity-0 transition-opacity duration-200 group-hover/video:opacity-100 has-[:focus-visible]:opacity-100">
-            <div className="h-1 cursor-pointer rounded-full bg-white/25 outline-none focus-visible:ring-2 focus-visible:ring-accent/70" onClick={handleScrub} role="slider" tabIndex={0} aria-label={t("Seek")} aria-valuemin={0} aria-valuemax={Math.round(duration || 0)} aria-valuenow={Math.round(progress || 0)} aria-valuetext={`${fmt(progress)} of ${fmt(duration)}`}
+            <div className="h-1 cursor-pointer rounded-full bg-white/25 outline-none focus-visible:ring-2 focus-visible:ring-accent/70" onClick={seekTo} role="slider" tabIndex={0} aria-label={t("Seek")} aria-valuemin={0} aria-valuemax={Math.round(duration || 0)} aria-valuenow={Math.round(progress || 0)} aria-valuetext={`${fmt(progress)} of ${fmt(duration)}`}
               onKeyDown={event => {
                 // Arrows step five seconds, like the main player's keys.
                 if (!duration || (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight')) return
@@ -380,19 +419,19 @@ export default function MiniPlayer({ windowed = false }) {
               <span className="w-20 text-[10px] tabular-nums text-white/70">{fmt(progress)} / {fmt(duration)}</span>
               <div className="flex items-center gap-1">
                 <button onClick={prev} aria-label={t("Previous")} className="p-1.5 text-white/80 hover:text-white"><SkipBack size={15} fill="currentColor" /></button>
-                <button onClick={togglePlay} disabled={!currentTrack} aria-label={isPlaying ? 'Pause' : 'Play'} className="flex h-8 w-8 items-center justify-center rounded-full bg-white text-black transition-transform hover:scale-105 disabled:opacity-40">{isPlaying ? <Pause size={15} fill="currentColor" /> : <Play size={15} fill="currentColor" className="translate-x-px" />}</button>
+                <button onClick={togglePlay} disabled={!currentTrack} aria-label={t(isPlaying ? 'Pause' : 'Play')} className="flex h-8 w-8 items-center justify-center rounded-full bg-white text-black transition-transform hover:scale-105 disabled:opacity-40">{isPlaying ? <Pause size={15} fill="currentColor" /> : <Play size={15} fill="currentColor" className="translate-x-px" />}</button>
                 <button onClick={next} aria-label={t("Next")} className="p-1.5 text-white/80 hover:text-white"><SkipForward size={15} fill="currentColor" /></button>
               </div>
               <div className="flex w-20 items-center justify-end gap-0.5">
-                <button onClick={toggleLike} disabled={!currentTrack} aria-label={isLiked ? 'Unlike' : 'Like'} className={`p-1.5 disabled:opacity-40 ${isLiked ? 'text-accent' : 'text-white/80 hover:text-white'}`}><Heart size={14} fill={isLiked ? 'currentColor' : 'none'} /></button>
-                <button onClick={() => setVolume(volume > 0 ? 0 : 0.8)} aria-label={volume === 0 ? 'Unmute' : 'Mute'} className="p-1.5 text-white/80 hover:text-white">{volume === 0 ? <VolumeX size={14} /> : <Volume2 size={14} />}</button>
+                <button onClick={toggleLike} disabled={!currentTrack} aria-label={t(isLiked ? 'Unlike' : 'Like')} className={`p-1.5 disabled:opacity-40 ${isLiked ? 'text-accent' : 'text-white/80 hover:text-white'}`}><Heart size={14} fill={isLiked ? 'currentColor' : 'none'} /></button>
+                <button onClick={() => setVolume(volume > 0 ? 0 : 0.8)} aria-label={t(volume === 0 ? 'Unmute' : 'Mute')} className="p-1.5 text-white/80 hover:text-white">{volume === 0 ? <VolumeX size={14} /> : <Volume2 size={14} />}</button>
               </div>
             </div>
           </div>
         </div>
       ) : <>
       <div className={`flex items-center gap-3 ${windowed ? 'p-4' : 'p-3'}`}>
-        {!videoMode && <div className={`${windowed ? 'w-20 h-20' : 'w-16 h-16'} rounded-lg overflow-hidden flex-shrink-0 bg-card`}>
+        {!videoMode && <div className={`${windowed ? 'w-20 h-20' : 'w-16 h-16'} rounded-xl overflow-hidden flex-shrink-0 bg-card ring-1 ring-white/10 shadow-lg`}>
           {isStreamed(currentTrack) ? (
             <StreamArtwork track={currentTrack} src={artSrc} alt={t("Artwork")}
               className="w-full h-full object-cover"
@@ -435,18 +474,27 @@ export default function MiniPlayer({ windowed = false }) {
 
       <div className={windowed ? 'px-4' : 'px-3'}>
         <div
-          className="h-1.5 bg-elevated rounded-full cursor-pointer group"
-          onClick={handleScrub}
+          className="h-1 bg-elevated rounded-full group relative cursor-pointer"
+          onPointerMove={handleScrub}
+          onPointerDown={e => {
+            if (e.button !== 0) return
+            e.currentTarget.setPointerCapture?.(e.pointerId)
+            scrubbing.current = true
+            handleScrub(e)
+          }}
+          onPointerUp={endScrub}
+          onPointerCancel={endScrub}
+          onPointerLeave={() => { if (!scrubbing.current) setLocalProg(null) }}
         >
           <div
-            className="h-full bg-accent rounded-full relative"
-            style={{ width: `${duration ? (progress/duration)*100 : 0}%` }}
+            className={`h-full bg-accent rounded-full relative ${localProg === null ? 'transition-[width] duration-150' : ''}`}
+            style={{ width: `${duration ? (display/duration)*100 : 0}%` }}
           >
             <div className="absolute right-0 top-1/2 -translate-y-1/2 w-2.5 h-2.5 bg-white rounded-full shadow opacity-0 group-hover:opacity-100 transition-opacity" />
           </div>
         </div>
-        <div className="flex justify-between text-[10px] text-muted mt-1">
-          <span>{fmt(progress)}</span>
+        <div className="flex justify-between text-[10px] text-muted mt-1 tabular-nums">
+          <span>{fmt(display)}</span>
           <span>{fmt(duration)}</span>
         </div>
       </div>
@@ -454,27 +502,30 @@ export default function MiniPlayer({ windowed = false }) {
       {/* flex-wrap: if the mini window is resized narrower than this row's
           content needs, the groups wrap onto a second line instead of
           overflowing past the window's right edge and getting clipped. */}
-      <div className={`${windowed ? 'px-4 pb-4 pt-3' : 'px-3 pb-3 pt-2'} flex flex-wrap items-center justify-between gap-3`}>
+      <div className={`${windowed ? 'px-4 pb-4 pt-2' : 'px-3 pb-3 pt-2'} flex flex-wrap items-center justify-between gap-3`}>
         <div className="flex items-center gap-1">
           <button
             onClick={() => setVolume(volume > 0 ? 0 : 0.8)}
-            className="text-muted hover:text-white transition-colors p-2"
+            className="rounded-lg p-2 text-muted hover:text-white hover:bg-white/10 transition-colors"
+            aria-label={t(volume === 0 ? 'Unmute' : 'Mute')}
           >
             {volume === 0 ? <VolumeX size={16} /> : <Volume2 size={16} />}
           </button>
           <button
             onClick={toggleLike}
             disabled={!currentTrack}
-            className={`transition-colors p-2 disabled:opacity-40 ${isLiked ? 'text-accent' : 'text-muted hover:text-white'}`}
+            className={`rounded-lg p-2 transition-colors disabled:opacity-40 ${isLiked ? 'text-accent hover:bg-accent/10' : 'text-muted hover:text-white hover:bg-white/10'}`}
+            aria-label={t(isLiked ? 'Unlike' : 'Like')}
           >
             <Heart size={16} fill={isLiked ? 'currentColor' : 'none'} />
           </button>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1">
           <button
             onClick={prev}
-            className="text-muted hover:text-white transition-colors p-2"
+            className="rounded-lg p-2 text-muted hover:text-white hover:bg-white/10 transition-colors"
+            aria-label={t("Previous")}
           >
             <SkipBack size={18} fill="currentColor" />
           </button>
@@ -482,18 +533,20 @@ export default function MiniPlayer({ windowed = false }) {
           <button
             onClick={togglePlay}
             disabled={!currentTrack}
-            className="w-10 h-10 bg-accent text-base rounded-full flex items-center justify-center hover:scale-105 transition-transform disabled:opacity-40"
+            className="w-11 h-11 bg-accent text-base rounded-full flex items-center justify-center shadow-lg shadow-accent/30 hover:scale-105 active:scale-95 transition-transform disabled:opacity-40 disabled:shadow-none"
+            aria-label={t(isPlaying ? 'Pause' : 'Play')}
           >
             {isPlaying ? (
-              <Pause size={18} fill="currentColor" />
+              <Pause size={19} fill="currentColor" />
             ) : (
-              <Play size={18} fill="currentColor" className="translate-x-0.5" />
+              <Play size={19} fill="currentColor" className="translate-x-0.5" />
             )}
           </button>
 
           <button
             onClick={next}
-            className="text-muted hover:text-white transition-colors p-2"
+            className="rounded-lg p-2 text-muted hover:text-white hover:bg-white/10 transition-colors"
+            aria-label={t("Next")}
           >
             <SkipForward size={18} fill="currentColor" />
           </button>
@@ -518,7 +571,8 @@ export default function MiniPlayer({ windowed = false }) {
             step={0.01}
             value={volume}
             onChange={(e) => setVolume(parseFloat(e.target.value))}
-            className={windowed ? 'w-24 accent-accent cursor-pointer h-1' : 'w-16 accent-accent cursor-pointer h-1'}
+            className={windowed ? 'w-24 accent-accent cursor-pointer h-1.5' : 'w-16 accent-accent cursor-pointer h-1.5'}
+            aria-label={t('Volume')}
           />
         </div>
       </div>

@@ -169,6 +169,8 @@ export function wordSyncEnabled() {
 
 export const api = {
   get isElectron() { return isE() },
+  // A no-op in web builds, where there is no Electron bridge to minimize.
+  minimize: () => { if (typeof window !== 'undefined') window.electron?.minimize?.() },
   fileURL: (path) => electronFileURL(path),
   artworkURL: (id, full = false) => BASE + '/artwork/' + encodeURIComponent(id) + (full ? '?full=1' : ''),
   // Full art is loaded only for large surfaces; Electron uses the local cover protocol.
