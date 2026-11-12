@@ -11,7 +11,7 @@ const { advertise, reconcileDiscovery } = require('./discovery')
 let instance
 
 function getLink() { return instance }
-function createLink({ server, db, remote, enabled = () => true }) {
+function createLink({ server, db, remote, enabled = () => true, advertiseDesktop = advertise }) {
   if (instance) return instance
   const currentUser = () => String(remote.getRemoteState().userId || 'guest')
   const store = new LinkStore(db)
@@ -41,7 +41,7 @@ function createLink({ server, db, remote, enabled = () => true }) {
     try {
       stopDiscovery = reconcileDiscovery({
         enabled: enabled(), paired: pairing || store.hasPairedDevices(), stop: stopDiscovery,
-        start: () => advertise({id:store.deviceId,port:Number(process.env.PORT)||3421,version:require('../../package.json').version}),
+        start: () => advertiseDesktop({id:store.deviceId,port:Number(process.env.PORT)||3421,version:require('../../package.json').version}),
       })
     } catch {}
   }

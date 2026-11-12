@@ -7,6 +7,7 @@ import SplitWordsSettings from '../components/SplitWordsSettings'
 import { normalizeSidebarCardLayout } from '../sideCardView'
 import { collectLocalPrefs, restoreLocalPrefs } from '../localPrefsBackup'
 import AutomaticBackupSettings from '../components/AutomaticBackupSettings'
+import ResetLocalPasswordModal from '../components/ResetLocalPasswordModal'
 import AppTabsSettings from '../components/AppTabsSettings'
 import { statePersistenceEnabled, setStatePersistenceEnabled, writeSavedRoute } from '../statePersistence.mjs'
 import { APP_LANGUAGES, useTranslation } from '../i18n'
@@ -338,6 +339,7 @@ export default function Settings() {
   const [historyExported, setHistoryExported] = useState(false)
   const [exportingAllData, setExportingAllData] = useState(false)
   const [fullExported, setFullExported] = useState(false)
+  const [includeBackupCredentials, setIncludeBackupCredentials] = useState(false)
   const [importingAllData, setImportingAllData] = useState(false)
   const [importPreview, setImportPreview] = useState(null)
   const [showImportModal, setShowImportModal] = useState(false)
@@ -348,6 +350,7 @@ export default function Settings() {
   const [usersTried, setUsersTried] = useState(() => peekCache('settings:users') !== undefined)
   const [accountStatus, setAccountStatus] = useState('')
   const [userToDelete, setUserToDelete] = useState(null)
+  const [userToRecover, setUserToRecover] = useState(null)
   const [showFactoryResetModal, setShowFactoryResetModal] = useState(false)
   const [showFactoryResetConfirmModal, setShowFactoryResetConfirmModal] = useState(false)
   const [resetConfirmText, setResetConfirmText] = useState('')
@@ -951,7 +954,7 @@ export default function Settings() {
   const handleFullExport = async () => {
     setExportingAllData(true)
     try {
-      const data = await api.exportAllData()
+      const data = await api.exportAllData({ includeCredentials: includeBackupCredentials })
       if (!data || data.error) throw new Error(t(data?.error || 'Export failed'))
       data.localPrefs = collectLocalPrefs()
       triggerDownload(
@@ -2737,7 +2740,7 @@ activeCategory === 'data' ? usersTried
             </button>
           </div>
           <p className="text-xs text-muted">
-            {t('Delete accounts directly from Lokal if one was created with the wrong password or is no longer needed.')}
+            {t('History, likes and playlists belong to the account that created them. Sign in to the same account after restoring a backup to see them. Guest history is separate.')}
           </p>
           {accountStatus && <p className="text-xs text-accent">{t(accountStatus)}</p>}
           <div className="space-y-2">
@@ -2752,13 +2755,17 @@ activeCategory === 'data' ? usersTried
                     {user?.id === account.id && <span className="text-xs text-accent ml-2">{t("Current")}</span>}
                   </p>
                   <p className="text-xs text-muted truncate">@{account.username}</p>
+                  <p className="text-xs text-muted">{t('History')}: {account.history_count ?? 0}</p>
                 </div>
+                <div className="flex gap-2 flex-shrink-0">
+                {api.isElectron && <button onClick={() => setUserToRecover(account)} className="px-3 py-1.5 rounded-lg text-xs border border-border text-muted hover:text-white">{t('Reset Password')}</button>}
                 <button
                   onClick={() => setUserToDelete(account)}
                   className="px-3 py-1.5 rounded-lg text-xs border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-colors"
                 >
                   Delete
                 </button>
+                </div>
               </div>
             ))}
           </div>
@@ -2779,7 +2786,7 @@ activeCategory === 'data' ? usersTried
 
       {inCategory('data') && (
       <Section title={t("Backup")}>
-        <Row label={t("Full App Export")} desc={t("Save everything (accounts, settings, themes, playlists, likes, history) to one file. Your music files aren't included.")}>
+        <Row label={t("Full App Export")} desc={t("Save accounts, settings, themes, playlists, likes and history for all accounts and Guest to one file. Music files are not included. Sign-in credentials are optional below.")}>
           <button
             onClick={handleFullExport}
             disabled={exportingAllData}
@@ -2789,6 +2796,10 @@ activeCategory === 'data' ? usersTried
             {fullExported && <span className="text-accent text-xs ml-1">✓</span>}
           </button>
         </Row>
+        {api.isElectron && <label className="flex items-start gap-3 text-xs text-muted">
+          <input type="checkbox" checked={includeBackupCredentials} disabled={exportingAllData} onChange={event => setIncludeBackupCredentials(event.target.checked)} className="mt-0.5" />
+          <span><span className="block text-sm text-white">{t('Include saved credentials in this export')}</span>{t('Include Spotify cookies, service tokens, and saved addon settings and logins. The JSON file is unencrypted: keep it private. Addon packages must be reinstalled on the other device; services may require sign-in again if a session expires. Automatic backups omit Spotify cookies and saved package logins.')}</span>
+        </label>}
         <Row label={t("Import Backup")} desc={t("Restore from a backup file. You'll see what it holds before anything is replaced.")}>
           <button
             onClick={readImportBackup}
@@ -3326,6 +3337,12 @@ activeCategory === 'data' ? usersTried
         </div>
       </Modal>
 
+      {userToRecover && <ResetLocalPasswordModal key={userToRecover.id} account={userToRecover} onClose={() => setUserToRecover(null)} onSuccess={() => {
+        setAccountStatus(t('Password updated. Signed in to {name}; its history is now active.', { name: userToRecover.display_name || userToRecover.username }))
+        setUserToRecover(null)
+        loadUsers()
+      }} />}
+
       <Modal open={!!userToDelete} onClose={() => setUserToDelete(null)} title={t("Delete Local Account?")} width="max-w-sm">
         <div className="space-y-4">
           <div className="flex gap-3">
@@ -3382,6 +3399,10 @@ activeCategory === 'data' ? usersTried
                   <p className="text-[10px] text-muted uppercase tracking-wider">{t("History")}</p>
                 </div>
               </div>
+              <p className="text-xs text-muted">{t('After import, Lokal opens as Guest. Sign in to a restored account to see its history, likes and playlists. If you forgot its password, use Reset Password under Settings → Data → Accounts.')}</p>
+              {Array.isArray(importPreview.data.users) && importPreview.data.users.filter(account => account && typeof account === 'object').map(account => <p key={account.id} className="text-xs text-muted">
+                @{account.username} · {t('History')}: {Array.isArray(importPreview.data.play_history) ? importPreview.data.play_history.filter(entry => entry?.user_id === account.id).length : 0}
+              </p>)}
             </div>
           )}
           <div className="flex gap-2">

@@ -388,7 +388,7 @@ export const api = {
     }
     return r
   }),
-  exportAllData: () => isE() ? el().exportAllData() : apiFetch('/settings/export-all'),
+  exportAllData: (options) => isE() ? el().exportAllData(options) : apiFetch('/settings/export-all'),
   automaticBackupStatus: () => isE() ? el().automaticBackupStatus() : Promise.resolve({ frequency: 'off' }),
   automaticBackupConfigure: (options) => isE() ? el().automaticBackupConfigure(options) : Promise.resolve({ error: 'Desktop app only.' }),
   automaticBackupChooseFolder: () => isE() ? el().automaticBackupChooseFolder() : Promise.resolve({ error: 'Desktop app only.' }),
@@ -654,6 +654,7 @@ export const api = {
   historyExport: (uid, format) => isE() ? el().historyExport(uid, format) : apiFetch(`/tracks/history/export?userId=${uid||'guest'}&format=${format||'json'}`),
   register: (d) => isE() ? el().register(d) : apiFetch('/users/register', { method:'POST', body:d }),
   login: (d) => isE() ? el().login(d) : apiFetch('/users/login', { method:'POST', body:d }),
+  resetLocalPassword: (d) => isE() ? el().resetLocalPassword(d) : Promise.resolve({ error: 'Reset local passwords in the desktop app.' }),
   listUsers: () => isE() ? el().listUsers() : apiFetch('/users'),
   deleteUser: (userId) => isE() ? el().deleteUser(userId) : apiFetch(`/users/${userId}`, { method:'DELETE' }),
   updateProfile: async (d) => {

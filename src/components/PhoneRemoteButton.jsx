@@ -212,6 +212,14 @@ export default function PhoneRemoteButton() {
                 )}
 
                 <p className="text-xs leading-relaxed text-muted">{t('Your phone and computer must be connected to the same Wi-Fi network.')}</p>
+                <details className="text-xs leading-relaxed text-muted">
+                  <summary className="cursor-pointer text-accent">{t('Phones show offline?')}</summary>
+                  <div className="mt-2 space-y-2">
+                    <p>{t('Open the current address above in your phone’s browser. If it cannot load, check that both devices use the same network and that guest Wi-Fi or a VPN is not isolating them.')}</p>
+                    <p>{t('Try the address in this computer’s browser too. If it works here but not on the phone, check the firewall. On Windows, allow Lokal through Windows Defender Firewall on Private networks.')}</p>
+                    <p>{t('Sign in to the account used when pairing. Each desktop has its own phone pairings; importing a backup does not move them. If this computer’s address changed, pair again using its current QR code.')}</p>
+                  </div>
+                </details>
                 {enabled && <LinkedDevicesPanel />}
                 {connectionInfo?.tokenRequired && <p className="text-xs leading-relaxed text-muted">{t('REMOTE_TOKEN is enabled. The phone remote will ask for the token when you connect; keep it private.')}</p>}
                 {connectionError && (

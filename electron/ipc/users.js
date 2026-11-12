@@ -8,7 +8,19 @@ function getSafeUser(db, userId) {
 }
 
 function listUsers(db) {
-  return db.prepare('SELECT id, username, display_name, avatar_path, bio, created_at FROM users ORDER BY created_at DESC').all()
+  return db.prepare(`SELECT id, username, display_name, avatar_path, bio, created_at,
+    (SELECT COUNT(*) FROM play_history WHERE user_id = users.id) AS history_count
+    FROM users ORDER BY created_at DESC`).all()
+}
+
+// Local account administration, like deletion below. Exposed only over native
+// IPC: remote web clients cannot use this to bypass a profile's password.
+function resetLocalPassword(db, { userId, password } = {}) {
+  if (typeof password !== 'string' || !password.trim()) return { error: 'A new password is required' }
+  if (Buffer.byteLength(password, 'utf8') > 72) return { error: 'Password must be at most 72 UTF-8 bytes' }
+  if (!getSafeUser(db, userId)) return { error: 'User not found' }
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(bcrypt.hashSync(password, 10), userId)
+  return { user: getSafeUser(db, userId) }
 }
 
 async function deleteUserData(db, userId) {
@@ -33,6 +45,7 @@ async function deleteUserData(db, userId) {
 }
 
 function registerUserHandlers(ipcMain) {
+  ipcMain.handle('user:resetLocalPassword', (_, payload) => resetLocalPassword(getDB(), payload))
   ipcMain.handle('user:register', async (_, { username, displayName, password }) => {
     const db = getDB()
     if (!username?.trim() || !password) return { error: 'Username and password required' }
@@ -108,4 +121,4 @@ function registerUserHandlers(ipcMain) {
   })
 }
 
-module.exports = { registerUserHandlers, listUsers, deleteUserData }
+module.exports = { registerUserHandlers, listUsers, deleteUserData, resetLocalPassword }

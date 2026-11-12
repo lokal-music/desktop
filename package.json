@@ -9,6 +9,7 @@
     "test:electron-syntax": "node scripts/check-electron-syntax.cjs",
     "test:playlist-export": "node --test scripts/playlist-m3u-export.test.mjs",
     "test:automatic-backups": "node --test scripts/automatic-backups.test.mjs",
+    "test:backup-recovery": "node --test scripts/backup-account-recovery.test.mjs scripts/backup-import-replaygain.test.mjs scripts/automatic-backups.test.mjs scripts/secret-settings.test.mjs scripts/link-discovery-account-startup.test.mjs scripts/link-lan-discovery.test.cjs",
     "dev": "npm run gen:icons && concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
     "dev:web": "npm run gen:icons && concurrently \"vite\" \"node server/start.js\"",
     "build": "npm run gen:icons && vite build && npm run native:prepare && electron-builder",

@@ -16,8 +16,8 @@ function toDataUrl(filePath) {
   return `data:${mime};base64,${fs.readFileSync(filePath).toString('base64')}`
 }
 
-/** Export one consistent SQLite snapshot, excluding account credentials. */
-function exportAppData(db) {
+/** Scheduled/web backups omit credentials; native manual exports can opt in. */
+function exportAppData(db, { includeCredentials = false } = {}) {
   const theme = db.prepare("SELECT value FROM settings WHERE key = 'theme'").get()?.value || 'dark'
   let themeOverrides = {}
   try {
@@ -33,7 +33,7 @@ function exportAppData(db) {
     version: 1,
     theme,
     theme_overrides: themeOverrides,
-    settings: Object.fromEntries(db.prepare('SELECT key, value FROM settings').all().filter(row => !SECRET_SETTING_KEYS.has(row.key)).map(row => [row.key, row.value])),
+    settings: Object.fromEntries(db.prepare('SELECT key, value FROM settings').all().filter(row => includeCredentials || !SECRET_SETTING_KEYS.has(row.key)).map(row => [row.key, row.value])),
     users,
     user_settings: db.prepare('SELECT user_id, key, value FROM user_settings ORDER BY user_id, key').all(),
     playlists: db.prepare('SELECT * FROM playlists ORDER BY created_at DESC').all().map(playlist => ({

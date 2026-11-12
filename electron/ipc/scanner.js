@@ -33,7 +33,7 @@ const { walkDir, AUDIO_EXTS } = require('./walkMusicFiles')
 const { isPrivatePhoneUploadPath } = require('../phoneUploadPaths')
 const { isPreparedStemClipName } = require('../automix/stem-clip')
 // Same secrets as the web server's SECRET_KEYS (server/routes/settings.js):
-// masked by settings:get, left out of settings:exportAll, kept on import.
+// Masked by settings:get, omitted by default from exports, kept on import.
 const { SECRET_SETTING_KEYS, exportAppData: buildBackup } = require('../appDataExport')
 const SECRET_SETTING_PLACEHOLDER = '••••••••'
 const DRUM_KIT_PATTERNS = /\b(kick|snare|808|hi[- ]?hat|hihat|rimshot|clap|crash|cymbal|drum( kit| loop| sample)?|sample pack|loop kit|one[- ]?shot|fx[- ]?sound|bass[- ]?drum|perc(ussion)?|stem[s]?|acapella)\b/i
@@ -1226,7 +1226,14 @@ async function writePlaylistCover(playlistId, imageData) {
   return coverPath
 }
 
-function exportAppData() { return buildBackup(getDB()) }
+function exportAppData(options = {}) {
+  const includeCredentials = options?.includeCredentials === true
+  const backup = buildBackup(getDB(), { includeCredentials })
+  if (includeCredentials) {
+    backup.addonCredentials = require('../mornye/packages').service(getDB()).storage.exportRecords()
+  }
+  return backup
+}
 
 function registerScannerHandlers(ipcMain) {
   const { BrowserWindow } = require('electron')
@@ -1792,24 +1799,35 @@ function registerScannerHandlers(ipcMain) {
       return { error: error.message }
     }
   })
-  ipcMain.handle('settings:exportAll', () => exportAppData())
+  ipcMain.handle('settings:exportAll', (_, options) => exportAppData(options))
   ipcMain.handle('settings:importAll', (_, payload) => {
-    const incoming = payload?.settings && typeof payload.settings === 'object' && !Array.isArray(payload.settings)
-      ? payload.settings
-      : {}
-    const current = getDB().prepare('SELECT key, value FROM settings').all()
-    const kept = current.filter(row => SECRET_SETTING_KEYS.has(row.key))
-    const result = importAppData(payload)
-    if (kept.length) {
-      const restore = getDB().prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)')
-      for (const row of kept) {
-        const incomingValue = incoming[row.key]
-        if (!(row.key in incoming) || String(incomingValue) === SECRET_SETTING_PLACEHOLDER) {
-          restore.run(row.key, row.value)
+    // Validate portable addon records before replacing any database tables.
+    const { validateBackupRecords } = require('../mornye/storage')
+    const addonRecords = validateBackupRecords(payload?.addonCredentials)
+    const restoreBackup = getDB().transaction(() => {
+      const incoming = payload?.settings && typeof payload.settings === 'object' && !Array.isArray(payload.settings)
+        ? payload.settings
+        : {}
+      const current = getDB().prepare('SELECT key, value FROM settings').all()
+      const kept = current.filter(row => SECRET_SETTING_KEYS.has(row.key))
+      const result = importAppData(payload)
+      if (kept.length) {
+        const restore = getDB().prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)')
+        for (const row of kept) {
+          const incomingValue = incoming[row.key]
+          if (!(row.key in incoming) || String(incomingValue) === SECRET_SETTING_PLACEHOLDER) {
+            restore.run(row.key, row.value)
+          }
         }
       }
-    }
-    return result
+      if (addonRecords.length) {
+        const packages = require('../mornye/packages').service(getDB())
+        packages.shutdown()
+        packages.storage.importRecords(addonRecords)
+      }
+      return result
+    })
+    return restoreBackup()
   })
   ipcMain.handle('settings:factoryReset', () => resetAppData())
   

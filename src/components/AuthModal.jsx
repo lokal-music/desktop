@@ -3,6 +3,7 @@ import React, { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Eye, EyeOff, User, Lock, Sparkles } from 'lucide-react'
 import Modal from './Modal'
+import { useNavigate } from 'react-router-dom'
 import { useAppStore } from '../store/player'
 import { api } from '../api'
 
@@ -28,6 +29,7 @@ function Field({ label, type = 'text', value, onChange, placeholder, icon: Icon,
 
 export default function AuthModal() {
   const { t } = useTranslation()
+  const navigate = useNavigate()
   const { showAuthModal, authMode, closeAuth, setUser, openAuth } = useAppStore()
   const [form, setForm] = useState({ username: '', displayName: '', password: '' })
   const [showPass, setShowPass] = useState(false)
@@ -107,6 +109,11 @@ export default function AuthModal() {
               {error}
             </motion.p>
           )}
+
+          {authMode === 'login' && api.isElectron && <button type="button" onClick={() => {
+            closeAuth()
+            navigate('/settings', { state: { category: 'data' } })
+          }} className="text-xs text-accent hover:text-accent-dim">{t('Forgot password? Reset your local account in Settings → Data → Accounts.')}</button>}
 
           <button
             type="submit"

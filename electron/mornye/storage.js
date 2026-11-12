@@ -23,8 +23,58 @@ function atomicWrite(file, data) {
 // Shown to the user (the Addons page looks for "credential vault" to offer the reset).
 const VAULT_UNAVAILABLE = 'Lokal cannot reach the operating-system credential vault (the Keychain on macOS), where it keeps the key for saved addon logins. Restart Lokal and try again. If it keeps happening, use "Reset saved logins" under Settings → Addons, then log in to your addons again.'
 
+const BACKUP_PURPOSES = new Set(['storage', 'settings', 'credentials', 'connection', 'session'])
+function validateBackupRecords(records) {
+  if (records === undefined) return []
+  if (!Array.isArray(records) || records.length > 10000) throw new Error('Invalid addon credentials in backup')
+  const seen = new Set()
+  for (const record of records) {
+    if (!record || typeof record.namespace !== 'string' || !/^[a-f0-9]{10,64}$/.test(record.namespace) || !BACKUP_PURPOSES.has(record.purpose)
+      || !record.value || typeof record.value !== 'object' || Array.isArray(record.value)
+      || Buffer.byteLength(JSON.stringify(record.value)) > 5 * 1024 * 1024) throw new Error('Invalid addon credentials in backup')
+    const key = `${record.namespace}/${record.purpose}`
+    if (seen.has(key)) throw new Error('Duplicate addon credentials in backup')
+    seen.add(key)
+  }
+  return records
+}
+
 class AddonStorage {
   constructor(root, { platform = process.platform, vault = null } = {}) { this.root = root; this.platform = platform; this.vaultProvider = vault }
+  // Export values, never the OS-bound master key. On the destination, write()
+  // encrypts each record using that device's credential vault.
+  exportRecords() {
+    const data = path.join(this.root, 'data')
+    if (!fs.existsSync(data)) return []
+    const records = []
+    for (const namespace of fs.readdirSync(data)) {
+      if (!/^[a-f0-9]{10,64}$/.test(namespace)) continue
+      for (const purpose of BACKUP_PURPOSES) {
+        if (fs.existsSync(this.file(namespace, purpose))) records.push({ namespace, purpose, value: this.read(namespace, purpose) })
+      }
+    }
+    return records
+  }
+  importRecords(records) {
+    validateBackupRecords(records)
+    // Resolve the local vault before writing any of the imported records.
+    if (records.some(record => record.purpose !== 'storage')) this.masterKey()
+    const staged = records.map(({ namespace, purpose, value }) => {
+      const file = this.file(namespace, purpose), bytes = Buffer.from(JSON.stringify(value))
+      return { file, previous: fs.existsSync(file) ? fs.readFileSync(file) : null,
+        bytes: purpose === 'storage' ? bytes : seal(bytes, this.derived(namespace, purpose)) }
+    })
+    const written = []
+    try {
+      for (const record of staged) { atomicWrite(record.file, record.bytes); written.push(record) }
+    } catch (error) {
+      for (const record of written.reverse()) {
+        if (record.previous === null) fs.rmSync(record.file, { force: true })
+        else atomicWrite(record.file, record.previous)
+      }
+      throw error
+    }
+  }
   /** Forgets the key and every saved login/setting file, so a new key is made on next use. */
   reset() {
     this.key = null
@@ -113,4 +163,4 @@ class AddonStorage {
     return { success: true }
   }
 }
-module.exports = { VAULT_UNAVAILABLE, AddonStorage, seal, open, atomicWrite }
+module.exports = { VAULT_UNAVAILABLE, AddonStorage, seal, open, atomicWrite, validateBackupRecords }
