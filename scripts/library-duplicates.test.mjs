@@ -21,6 +21,9 @@ function fixture(t) {
   fs.mkdirSync(music)
   db.prepare("INSERT OR REPLACE INTO settings (key,value) VALUES ('music_folder', ?), ('delete_files_from_disk', '0')").run(music)
   t.after(() => {
+    // Windows directory watchers survive removal of their test directory.
+    // Close them before deleting fixtures or they keep the CI process alive.
+    require('../electron/libraryWatcher').stopWatching()
     db.close()
     if (previous === undefined) delete process.env.LOKAL_DATA_DIR
     else process.env.LOKAL_DATA_DIR = previous
