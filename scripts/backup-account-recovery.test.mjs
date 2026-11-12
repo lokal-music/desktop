@@ -35,14 +35,30 @@ test('backup and password recovery retain both account and Guest history and des
       { id: 2, user_id: 'owner', track_id: 'song', seconds_played: 120 },
     ],
     listening_events: [{ user_id: 'owner', track_id: 'song', seconds_played: 120 }],
-    settings: { spotify_sp_dc: 'test-cookie', addons: JSON.stringify([{ key: 'lastwave', signingKey: 'test-hmac' }]) },
+    settings: {
+      spotify_sp_dc: 'test-cookie',
+      lastfm_api_key: 'test-lastfm-api-key',
+      lastfm_api_secret: 'test-lastfm-secret',
+      lastfm_session_key: 'test-lastfm-session',
+      lastfm_username: 'test-listener',
+      lastfm_enabled: '1',
+      lastfm_scrobbling: '1',
+      listenbrainz_token: 'test-listenbrainz-token',
+      listenbrainz_username: 'test-listener',
+      listenbrainz_enabled: '1',
+      addons: JSON.stringify([{ key: 'lastwave', signingKey: 'test-hmac' }]),
+    },
   })
   const backup = exportAppData(db)
   assert.equal(backup.play_history.length, 2)
   assert.equal(backup.listening_events[0].user_id, 'owner')
   assert.equal(backup.settings.spotify_sp_dc, undefined)
+  for (const key of ['lastfm_api_secret', 'lastfm_session_key', 'listenbrainz_token']) assert.equal(backup.settings[key], undefined)
   const portable = exportAppData(db, { includeCredentials: true })
   assert.equal(portable.settings.spotify_sp_dc, 'test-cookie')
+  assert.equal(portable.settings.lastfm_api_secret, 'test-lastfm-secret')
+  assert.equal(portable.settings.lastfm_session_key, 'test-lastfm-session')
+  assert.equal(portable.settings.listenbrainz_token, 'test-listenbrainz-token')
   assert.equal(JSON.parse(portable.settings.addons)[0].signingKey, 'test-hmac')
   const packages = require('../electron/mornye/packages').service(db)
   const namespace = 'b'.repeat(64)
@@ -56,9 +72,12 @@ test('backup and password recovery retain both account and Guest history and des
   // Importing another PC's data must never clone its device ID or replace
   // the local phone pairing tokens.
   const link = new LinkStore(db)
-  db.prepare('INSERT INTO remote_devices VALUES (?,?,?,?,?,?,?)').run('phone', 'Phone', 'token-hash', 'owner', 1, 1, 0)
+  db.prepare('INSERT INTO remote_devices (id,name,token_hash,user_id,created,last_seen,revoked) VALUES (?,?,?,?,?,?,?)').run('phone', 'Phone', 'token-hash', 'owner', 1, 1, 0)
   const desktopId = link.deviceId
   nativeHandlers.get('settings:importAll')({}, JSON.parse(JSON.stringify(nativeBackup)))
+  for (const key of ['lastfm_api_key', 'lastfm_api_secret', 'lastfm_session_key', 'lastfm_username', 'lastfm_enabled', 'lastfm_scrobbling', 'listenbrainz_token', 'listenbrainz_username', 'listenbrainz_enabled']) {
+    assert.equal(db.prepare('SELECT value FROM settings WHERE key=?').get(key).value, nativeBackup.settings[key], key)
+  }
   assert.deepEqual(db.prepare('SELECT source_ref, source_url, artwork_url FROM tracks WHERE id=?').get('song'), {
     source_ref: 'test:song', source_url: 'https://example.com/song', artwork_url: 'https://example.com/cover.jpg',
   })

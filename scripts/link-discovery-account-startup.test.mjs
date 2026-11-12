@@ -27,7 +27,7 @@ test('discovery starts after account restoration and restarts after Phone Remote
     advertiseDesktop: () => { starts++; return () => { stops++ } },
   })
   t.after(() => { link.close(); db.close() })
-  db.prepare('INSERT INTO remote_devices VALUES (?,?,?,?,?,?,?)').run('phone', 'Phone', 'test-hash', 'owner', 1, 1, 0)
+  db.prepare('INSERT INTO remote_devices (id,name,token_hash,user_id,created,last_seen,revoked) VALUES (?,?,?,?,?,?,?)').run('phone', 'Phone', 'test-hash', 'owner', 1, 1, 0)
   assert.equal(starts, 0)
   userId = 'owner'
   events.emit('state', { userId })

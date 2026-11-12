@@ -2798,7 +2798,7 @@ activeCategory === 'data' ? usersTried
         </Row>
         {api.isElectron && <label className="flex items-start gap-3 text-xs text-muted">
           <input type="checkbox" checked={includeBackupCredentials} disabled={exportingAllData} onChange={event => setIncludeBackupCredentials(event.target.checked)} className="mt-0.5" />
-          <span><span className="block text-sm text-white">{t('Include saved credentials in this export')}</span>{t('Include Spotify cookies, service tokens, and saved addon settings and logins. The JSON file is unencrypted: keep it private. Addon packages must be reinstalled on the other device; services may require sign-in again if a session expires. Automatic backups omit Spotify cookies and saved package logins.')}</span>
+          <span><span className="block text-sm text-white">{t('Include saved credentials in this export')}</span>{t('Include Spotify cookies, Last.fm and ListenBrainz logins, service tokens, and saved addon settings and logins. The JSON file is unencrypted: keep it private. Addon packages must be reinstalled on the other device; services may require sign-in again if a session expires. Automatic backups omit Spotify cookies and saved package logins.')}</span>
         </label>}
         <Row label={t("Import Backup")} desc={t("Restore from a backup file. You'll see what it holds before anything is replaced.")}>
           <button
