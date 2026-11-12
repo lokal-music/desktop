@@ -1,0 +1,45 @@
+name: Renderer startup
+
+on:
+  pull_request:
+    paths:
+      - 'src/App.jsx'
+      - 'src/main.jsx'
+      - 'src/RenderErrorBoundary.jsx'
+      - 'src/mergedTracks.js'
+      - 'src/store/player.js'
+      - 'src/queueStorage.js'
+      - 'vite.config.mjs'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'scripts/renderer-startup-browser.test.mjs'
+      - '.github/workflows/renderer-startup-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  startup:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Install isolated browser test dependency
+        shell: bash
+        run: npm install --prefix "$RUNNER_TEMP/startup-browser" --no-package-lock --ignore-scripts playwright@1.62.1
+      - run: npm run gen:icons
+      - name: Check the production renderer with fresh, empty and restored queues
+        env:
+          NODE_PATH: ${{ runner.temp }}/startup-browser/node_modules
+        run: node --test scripts/renderer-startup-browser.test.mjs

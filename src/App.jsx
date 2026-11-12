@@ -2925,7 +2925,7 @@ export default function App() {
 
   useEffect(() => {
     const mergedPlayback = mergedPlaybackRef.current
-    if (mergedPlayback?.trackId === currentTrack?.id) {
+    if (mergedPlayback?.trackId && mergedPlayback.trackId === currentTrack?.id) {
       mergedPlaybackRef.current = null
       const el = audioRef.current
       if (!isCrossfadingRef.current && !castActive && !currentTrack.atmosNative && reuseMergedAudio(el, mergedPlayback)) {
