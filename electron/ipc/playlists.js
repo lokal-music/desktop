@@ -815,7 +815,15 @@ function registerPlaylistHandlers() {
   ipcMain.handle('playlist:syncLinked', () => { try { return require('../playlists/sync').linked(getDB()) } catch { return [] } });
   ipcMain.handle('playlist:sync', async (_, playlistId, userId) => {
     try {
-      return await require('../playlists/sync').sync(getDB(), playlistId, { packages: require('../mornye/packages').service(getDB()), helpers: { findTrack, createGhostTrack, readPlaylist: url => require('../playlists/linkImport').fetchPlaylist({ ytdlp: require('./tools').findYtDlp(), url, settings: require('./downloader').manager().settings(), db: getDB() }) }, userId: userId || 'guest' });
+      const sync = require('../playlists/sync');
+      return await sync.sync(getDB(), playlistId, {
+        packages: require('../mornye/packages').service(getDB()),
+        helpers: {
+          findTrack, createGhostTrack,
+          readSpotifyPlaylist: url => sync.readSpotifyPlaylist(url, { cookie: require('./downloader').manager().settings().spotify_sp_dc }),
+          readPlaylist: url => require('../playlists/linkImport').fetchPlaylist({ ytdlp: require('./tools').findYtDlp(), url, settings: require('./downloader').manager().settings(), db: getDB() }),
+        }, userId: userId || 'guest',
+      });
     } catch (e) { return { error: e.message } }
   });
 

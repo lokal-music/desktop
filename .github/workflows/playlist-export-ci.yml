@@ -13,9 +13,13 @@ on:
       - 'electron/download/manager.js'
       - 'scripts/m3u-extension-quality.test.mjs'
       - 'electron/ipc/playlists.js'
+      - 'electron/playlists/sync.js'
+      - 'scripts/playlist-sync.test.mjs'
+      - 'scripts/download-library-sync.test.mjs'
       - 'electron/libraryFolder.js'
       - 'electron/preload.js'
       - 'src/pages/Playlist.jsx'
+      - 'src/pages/SpotifyPlaylist.jsx'
       - 'src/ghostDownloads.js'
       - 'scripts/ghost-downloads.test.mjs'
       - 'src/api.js'
@@ -48,6 +52,13 @@ jobs:
         run: npm run test:electron-syntax
       - name: Install desktop dependencies
         run: npm ci --ignore-scripts
+      - name: Build SQLite for host-side playlist and queue checks
+        run: npm rebuild better-sqlite3
+      - name: Verify full playlist sync and download queue references
+        env:
+          # These Node tests import Electron's bridge but never run its binary.
+          ELECTRON_OVERRIDE_DIST_PATH: ${{ runner.temp }}/unused-electron
+        run: node --test scripts/playlist-sync.test.mjs scripts/download-library-sync.test.mjs
       - name: Compile renderer
         run: |
           npm run gen:icons

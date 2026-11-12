@@ -100,6 +100,21 @@ test('Spotify pagination advances by actual page size, and rejects an incomplete
   await assert.rejects(playlistTracks('', DW, { query: broken, max: null }), /before loading all/)
 })
 
+test('a 1900-entry playlist reads all 19 pages and reports unavailable Spotify entries', async () => {
+  const all = Array.from({ length: 1900 }, (_, n) => n < 1200 ? track(n) : {
+    itemV2: { __typename: 'LocalTrackResponseWrapper', data: { __typename: 'LocalTrack', name: 'Local only' } },
+  })
+  const offsets = []
+  const result = await playlistTracks('', DW, { max: null, query: async (_, { offset, limit }) => {
+    offsets.push(offset)
+    return { playlistV2: { __typename: 'Playlist', content: { totalCount: all.length, items: all.slice(offset, offset + limit) } } }
+  } })
+  assert.equal(result.total, 1900)
+  assert.equal(result.tracks.length, 1200)
+  assert.equal(result.unavailable, 700)
+  assert.deepEqual(offsets, Array.from({ length: 19 }, (_, n) => n * 100))
+})
+
 test('playlist songs: a missing playlist says so', async () => {
   await assert.rejects(playlistTracks('', DW, { query: async () => ({ playlistV2: { __typename: 'NotFound', message: 'Not found' } }) }), /Not found/)
 })

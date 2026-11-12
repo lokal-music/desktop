@@ -787,6 +787,7 @@ async function playlistTracks(rawCookie, uri, { query, max = 200 } = {}) {
   const limit = max == null ? Infinity : Math.max(0, Math.floor(Number(max) || 0))
   let title = ''
   let offset = 0
+  let totalCount = null
   // Never silently stop at 1,000 items: continue until Spotify's totalCount
   // is exhausted. The guard only rejects endpoints that fail to terminate.
   for (let pages = 0; offset < limit; pages++) {
@@ -800,6 +801,7 @@ async function playlistTracks(rawCookie, uri, { query, max = 200 } = {}) {
     const rawTotal = playlist.content?.totalCount
     const total = rawTotal == null ? null : Number(rawTotal)
     if (total != null && (!Number.isSafeInteger(total) || total < 0)) throw new TransientError('Spotify returned an invalid playlist total.')
+    if (total != null) totalCount = total
     if (!items.length) {
       if (total != null && offset < total) throw new TransientError('Spotify stopped before loading all playlist tracks. Retry later.')
       break
@@ -810,7 +812,8 @@ async function playlistTracks(rawCookie, uri, { query, max = 200 } = {}) {
     if (total != null && offset >= total) break
     if (total == null && items.length < 100) break
   }
-  return { title, tracks: max == null ? tracks : tracks.slice(0, limit) }
+  return { title, tracks: max == null ? tracks : tracks.slice(0, limit),
+    ...(max == null ? { total: totalCount ?? offset, unavailable: offset - tracks.length } : {}) }
 }
 
 

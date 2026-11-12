@@ -378,6 +378,42 @@ test('batch repair queues every supported missing library file and reports unsup
 })
 
 const { downloadMissingCollectionTracks } = await import('../src/ghostDownloads.js')
+const { downloadMissingProviderTracks } = await import('../src/ghostDownloads.js')
+
+test('Spotify provider metadata downloads skip library files and repeated entries without importing fake IDs', async () => {
+  const c = client({
+    inLibrary: [{ id: 'owned', title: 'Song 1', artist: 'Artist 1', file_path: '/music/owned.flac' }],
+    online: [{ title: 'Song 2', artist: 'Artist 2', vid: 'aaaaaaaaaa2' }],
+  })
+  const saved = [], progress = []
+  const rows = [1, 2, 2, 3].map((n, i) => ({ id: `display-${i}`, spotifyUri: `spotify:track:${n}`, title: `Song ${n}`, artist: `Artist ${n}`, duration: 200 }))
+  const result = await downloadMissingProviderTracks(rows, { client: c,
+    save: async (track, options) => { saved.push({ track, options }); return { downloadId: 'queued' } },
+    onProgress: message => progress.push(message),
+  })
+  assert.deepEqual(result, { started: 1, existing: 1, failed: 0, notFound: 1 })
+  assert.equal(saved.length, 1)
+  assert.equal(saved[0].options.replaceImported, undefined)
+  assert.equal(saved[0].options.expectedDuration, 200)
+  assert.equal(saved[0].options.tags.title, 'Song 2')
+  assert.equal(progress.at(-1), 'Finding and queuing songs… 3/3')
+  assert.deepEqual(c.swaps, [])
+})
+
+test('YouTube provider downloads retain the exact video and honor cancellation', async () => {
+  let current = true
+  const c = client(), prepared = [], saved = []
+  c.onlineSave = async rows => { prepared.push(...rows); return rows.map(row => ({ ...row, id: `yt-${row.id}`, file_path: `ghost://youtube/online/${row.id}` })) }
+  c.onlinePrepare = async () => { throw new Error('Downloading must not prepare playback streams') }
+  const result = await downloadMissingProviderTracks(['abcdefghijk', 'lmnopqrstuv'].map(videoId => ({ title: videoId, artist: 'Band', videoId, source: 'youtube' })), {
+    client: c, concurrency: 1, isCurrent: () => current,
+    save: async track => { saved.push(track); current = false; return { downloadId: 'queued' } },
+  })
+  assert.equal(prepared[0].id, 'abcdefghijk')
+  assert.equal(saved.length, 1)
+  assert.equal(result.started, 1)
+  assert.equal(result.cancelled, true)
+})
 
 test('collection download skips local files, dedupes rows, and includes streamed ghosts', async () => {
   const local = { id: 'local', file_path: '/music/owned.flac' }

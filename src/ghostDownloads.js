@@ -7,7 +7,7 @@
 import { api } from './api.js'
 import { downloadBatchCurrent } from './downloadCancellation.js'
 import { isGhostTrack, saveToLibrary, streamRef, isAddonProvider, missingTrackCanRedownload } from './onlineTracks.js'
-import { mapLimited, playbackSources, resolveRecommendationTracks } from './recommendations.js'
+import { mapLimited, playbackSources, resolveRecommendationTracks, songKey } from './recommendations.js'
 
 /**
  * Download `ghosts` (a playlist's ghost tracks). Songs found in the library
@@ -223,6 +223,42 @@ export async function downloadMissingCollectionTracks(tracks, options = {}) {
     result.started += repaired.queued
     result.failed += repaired.failed + repaired.unsupported
   }
+  if (!isCurrent()) result.cancelled = true
+  return result
+}
+
+/** Provider playlist rows are metadata, not persisted imported-ghost IDs. */
+export async function downloadMissingProviderTracks(tracks, { client = api, save = saveToLibrary, onProgress, isCurrent = () => true, concurrency = 3 } = {}) {
+  isCurrent = downloadBatchCurrent(isCurrent)
+  const unique = [...new Map((Array.isArray(tracks) ? tracks : []).filter(track => track?.title)
+    .map(track => [track.spotifyUri || track.videoId || songKey(track), track])).values()]
+  const result = { started: 0, existing: 0, failed: 0, notFound: 0 }
+  if (!unique.length || !isCurrent()) return result
+  const sources = await playbackSources(client)
+  let done = 0
+  await mapLimited(unique, async candidate => {
+    if (!isCurrent()) return
+    try {
+      const [found] = await resolveRecommendationTracks([candidate], client, {
+        sources, isCurrent, prepareStreams: false, preserveMatchMetadata: true,
+      })
+      if (!isCurrent()) return
+      if (!found) { result.notFound++; return }
+      if (!isGhostTrack(found) && !found.missing) { result.existing++; return }
+      const response = await save(found, {
+        isCurrent, expectedDuration: candidate.duration,
+        tags: { title: candidate.title, artist: candidate.artist, album: candidate.album || undefined },
+      })
+      if (response?.cancelled) return
+      if (response?.alreadyInLibrary) result.existing++
+      else if (response?.error) result.failed++
+      else result.started++
+    } catch { result.failed++ }
+    finally {
+      done++
+      if (isCurrent()) onProgress?.(`Finding and queuing songs… ${done}/${unique.length}`, { completed: done, total: unique.length, percent: Math.floor(done / unique.length * 100) })
+    }
+  }, concurrency)
   if (!isCurrent()) result.cancelled = true
   return result
 }

@@ -455,6 +455,12 @@ export default function Playlist() {
               <Share2 size={17} />
             </button>
             {loaded && (
+              <button type="button" onClick={downloadMissing} disabled={downloading || !tracks.length}
+                aria-label={t('Download missing songs')} title={t(downloading ? 'Preparing downloads…' : 'Download missing songs')} className={ICON_BUTTON}>
+                <Download size={18} className={downloading ? 'animate-pulse' : ''} />
+              </button>
+            )}
+            {loaded && (
               <button
                 type="button"
                 onClick={showExportMenu}

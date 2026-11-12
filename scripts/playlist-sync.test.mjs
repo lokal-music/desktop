@@ -23,6 +23,63 @@ function setup(remote) {
 }
 const songs = db => db.prepare('SELECT t.title FROM playlist_tracks pt JOIN tracks t ON t.id = pt.track_id ORDER BY position').all().map(r => r.title)
 
+test('a linked Spotify playlist recovers the remaining 700 of 1900 songs without repeating the first 1200', async t => {
+  const all = Array.from({ length: 1900 }, (_, n) => ({ id: String(n).padStart(22, '0'), name: `Song ${n}`, artists: 'Band' }))
+  const { db, packages, helpers } = setup({ list: all.slice(0, 1200) })
+  t.after(() => db.close())
+  const url = `https://open.spotify.com/playlist/${'P'.repeat(22)}`
+  sync.link(db, 'p1', url)
+  assert.equal((await sync.sync(db, 'p1', { packages, helpers })).added, 1200)
+  packages.runtime = async () => { throw new Error('The addon preview must not be read again') }
+  helpers.readSpotifyPlaylist = link => sync.readSpotifyPlaylist(link, { cookie: 'test-cookie', read: async (cookie, uri, options) => {
+    assert.equal(cookie, 'test-cookie')
+    assert.equal(uri, `spotify:playlist:${'P'.repeat(22)}`)
+    assert.equal(options.max, null)
+    return { title: 'Complete playlist', total: 1900, tracks: all.map(track => ({
+      spotifyUri: `spotify:track:${track.id}`, title: track.name, artist: 'Band', duration: 200,
+    })) }
+  } })
+  const recovered = await sync.sync(db, 'p1', { packages, helpers })
+  assert.equal(recovered.added, 700)
+  assert.equal(recovered.total, 1900)
+  assert.equal(songs(db).length, 1900)
+  assert.equal((await sync.sync(db, 'p1', { packages, helpers })).added, 0)
+  assert.equal(songs(db).length, 1900)
+})
+
+test('an explicitly incomplete addon playlist never records a successful partial sync', async t => {
+  const { db, packages, helpers } = setup({ list: [] })
+  t.after(() => db.close())
+  sync.link(db, 'p1', 'https://open.spotify.com/playlist/xyz')
+  packages.runtime = async () => ({ invoke: async () => ({ total_tracks: 1900, tracks: Array.from({ length: 1200 }, (_, n) => ({ id: n, name: `Song ${n}` })) }) })
+  const result = await sync.sync(db, 'p1', { packages, helpers })
+  assert.match(result.error, /1200 of 1900/)
+  assert.equal(songs(db).length, 0)
+  assert.equal(sync.status(db, 'p1').syncedAt, null)
+  assert.equal(db.prepare('SELECT seen_json FROM playlist_sync').get().seen_json, '[]')
+})
+
+test('Spotify read failures preserve existing songs and sync position rather than falling back to a partial addon', async t => {
+  const { db, packages, helpers } = setup({ list: [{ id: 'seen', name: 'Owned', artists: 'Band' }] })
+  t.after(() => db.close())
+  sync.link(db, 'p1', `https://open.spotify.com/playlist/${'P'.repeat(22)}`)
+  await sync.sync(db, 'p1', { packages, helpers })
+  const before = db.prepare('SELECT seen_json,synced_at FROM playlist_sync').get()
+  helpers.readSpotifyPlaylist = async () => { throw new Error('Spotify stopped before loading all playlist tracks.') }
+  assert.match((await sync.sync(db, 'p1', { packages, helpers })).error, /before loading all/)
+  assert.deepEqual(db.prepare('SELECT seen_json,synced_at FROM playlist_sync').get(), before)
+  assert.deepEqual(songs(db), ['Owned'])
+})
+
+test('truncated YouTube Music reads do not mark a partial playlist synced', async t => {
+  const { db, packages, helpers } = setup({ list: [] })
+  t.after(() => db.close())
+  sync.link(db, 'p1', 'https://music.youtube.com/playlist?list=PLabc')
+  helpers.readPlaylist = async () => ({ truncated: true, entries: [{ title: 'Song', source_url: 'https://music.youtube.com/watch?v=abcdefghijk' }] })
+  assert.match((await sync.sync(db, 'p1', { packages, helpers })).error, /Only part/)
+  assert.equal(songs(db).length, 0)
+})
+
 // Exercise the registered IPC handlers used by both launch and manual sync.
 // Resolve the actual package module path before replacing its external runtime.
 function ipcHandlers(db, packages, readPlaylist) {

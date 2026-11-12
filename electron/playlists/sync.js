@@ -91,6 +91,24 @@ function libraryCopy(db, helpers, entry) {
   return !wanted || artistNames(row?.artist).includes(wanted) ? found : null
 }
 
+/** Prefer Lokal's fully paginated account reader when Spotify is connected. */
+async function readSpotifyPlaylist(url, { cookie, read } = {}) {
+  if (!cookie) return null
+  const id = new URL(url).pathname.match(/\/playlist\/([A-Za-z0-9]{22})(?:\/|$)/)?.[1]
+  if (!id) throw new Error('Use the full Spotify playlist link.')
+  const result = await (read || require('../artwork/spotify').playlistTracks)(cookie, `spotify:playlist:${id}`, { max: null })
+  if (result?.error) throw new Error(result.error)
+  if (!Array.isArray(result?.tracks)) throw new Error('Spotify returned no playlist tracks.')
+  return { name: result.title, total_tracks: result.total ?? result.tracks.length, skipped: result.unavailable || 0,
+    tracks: result.tracks.map(track => ({
+      id: String(track.spotifyUri || '').replace(/^spotify:track:/, ''),
+      name: track.title, artists: track.artists || track.artist, album: track.album,
+      duration_ms: Number(track.duration) > 0 ? track.duration * 1000 : null,
+      source_url: /^spotify:track:[A-Za-z0-9]{22}$/.test(track.spotifyUri || '')
+        ? `https://open.spotify.com/track/${track.spotifyUri.slice('spotify:track:'.length)}` : null,
+    })) }
+}
+
 /**
  * Sync one linked playlist. `packages`: the SpotiFLAC PackageService.
  * `helpers`: { findTrack, createGhostTrack } from the playlist IPC.
@@ -103,14 +121,19 @@ async function sync(db, playlistId, { packages, helpers, userId = 'guest' }) {
   const platform = PLATFORMS.find(p => p.id === row.platform)
   const fail = message => { db.prepare('UPDATE playlist_sync SET error = ? WHERE playlist_id = ?').run(message, playlistId); return { error: message } }
   let result
-  if (platform?.id === 'deezer') {
+  if (platform?.id === 'spotify' && helpers.readSpotifyPlaylist) {
+    try { result = await helpers.readSpotifyPlaylist(row.url) }
+    catch (error) { return fail(error.message) }
+  }
+  if (!result && platform?.id === 'deezer') {
     try { result = await (helpers.readDeezerPlaylist || require('./deezer').readPlaylist)(row.url) }
     catch (error) { return fail(error.message) }
-  } else if (platform?.builtin) {
+  } else if (!result && platform?.builtin) {
     // YouTube Music: the same reader as pasting a playlist link to import it.
     let read
     try { read = await helpers.readPlaylist(row.url) } catch (error) { return fail(error.message) }
     if (!read || read.error) return fail(String(read?.error || 'Could not read that YouTube Music playlist.'))
+    if (read.truncated) return fail('Only part of this YouTube Music playlist was returned. Retry syncing to load all songs.')
     result = {
       name: read.title,
       tracks: (read.entries || []).map(entry => ({
@@ -118,19 +141,27 @@ async function sync(db, playlistId, { packages, helpers, userId = 'guest' }) {
         duration_ms: entry.duration ? entry.duration * 1000 : null, source_url: entry.source_url,
       })),
     }
-  } else {
+  } else if (!result) {
     const addon = addonFor(packages, row.url)
     if (!addon) return fail(`To sync ${platform?.label || 'this'} playlists, install the ${platform?.addon || 'matching'} addon in Settings → Addons.`)
     const runtime = await packages.runtime(addon.key)
-    try { result = await runtime.invoke('handleUrl', [row.url]) } catch (error) { return fail(error.message) }
+    try { result = await runtime.invoke('handleUrl', [row.url], { timeoutMs: 10 * 60 * 1000 }) } catch (error) { return fail(error.message) }
     if (result?.success === false || result?.error) {
       const message = String(result?.error || 'The addon could not read this playlist.')
       return fail(/VERIFY_REQUIRED/i.test(message) ? `${addon.manifest.displayName} needs verifying first: Settings → Addons → Verify access.` : message)
     }
   }
-  const remote = (result?.playlist?.tracks || result?.tracks || []).filter(track => track && (track.name || track.title))
+  const collection = result?.playlist || result
+  const rawTracks = collection?.tracks
+  if (!Array.isArray(rawTracks)) return fail('The playlist reader returned no track list.')
+  const expected = Number(collection.total_tracks ?? collection.totalTracks ?? collection.track_count)
+  if (collection.truncated || (Number.isFinite(expected) && expected > rawTracks.length + (Number(collection.skipped) || 0))) {
+    return fail(`Only ${rawTracks.length} of ${Number.isFinite(expected) ? expected : 'all'} playlist entries were returned. Update the playlist addon or connect Spotify in Settings → Integrations, then sync again.`)
+  }
+  const remote = rawTracks.filter(track => track && (track.name || track.title))
   if (!remote.length) return fail('The playlist is empty, or the addon could not read its songs.')
-  const seen = new Set(JSON.parse(row.seen_json || '[]'))
+  const seen = new Set(JSON.parse(row.seen_json || '[]').map(key => row.platform === 'spotify'
+    ? key.replace(/^spotify:spotify:track:/, 'spotify:') : key))
   // Linking a playlist that already has songs: the first sync doesn't add
   // them twice (one remote entry per song already here). After that, the
   // remote ids alone decide what's new, so a second recording or a repeated
@@ -149,7 +180,8 @@ async function sync(db, playlistId, { packages, helpers, userId = 'guest' }) {
   for (const track of remote) {
     const artist = Array.isArray(track.artists) ? track.artists.map(a => typeof a === 'string' ? a : a?.name).filter(Boolean).join(', ') : String(track.artists || track.artist || '')
     const title = String(track.name || track.title)
-    const key = `${row.platform}:${track.id || songKey(title, artist)}`
+    const remoteId = row.platform === 'spotify' ? String(track.id || '').replace(/^spotify:track:/, '') : track.id
+    const key = `${row.platform}:${remoteId || songKey(title, artist)}`
     if (seen.has(key)) continue
     seen.add(key)
     const already = existing.get(songKey(title, artist)) || 0
@@ -162,7 +194,9 @@ async function sync(db, playlistId, { packages, helpers, userId = 'guest' }) {
   }
   const title = String(result?.name || result?.playlist?.name || row.title || '').slice(0, 300) || null
   db.prepare('UPDATE playlist_sync SET seen_json = ?, synced_at = ?, title = ?, error = NULL WHERE playlist_id = ?').run(JSON.stringify([...seen]), Date.now(), title, playlistId)
-  return { ok: true, added: matched + ghosts.length, matched, ghosts, total: remote.length, title, firstSync: !row.synced_at }
+  return { ok: true, added: matched + ghosts.length, matched, ghosts, total: remote.length,
+    unavailable: Number(collection.skipped) || 0, expectedTotal: Number.isFinite(expected) ? expected : remote.length,
+    title, firstSync: !row.synced_at }
 }
 
-module.exports = { PLATFORMS, platformOf, addonFor, link, unlink, status, linked, sync }
+module.exports = { PLATFORMS, platformOf, addonFor, link, unlink, status, linked, sync, readSpotifyPlaylist }

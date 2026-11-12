@@ -11,8 +11,10 @@ export async function syncPlaylist(playlistId, { userId, client = api, download 
   const result = await client.playlistSync(playlistId, userId).catch(error => ({ error: error.message }))
   if (result?.error) return { error: result.error }
   const added = Number(result?.added) || 0
+  const unavailable = Number(result?.unavailable) || 0
+  const availability = unavailable ? `${unavailable} playlist entries unavailable from the provider` : ''
   if (typeof window !== 'undefined' && added) window.dispatchEvent(new Event('lokal:refresh'))
-  if (!added) return { ...result, message: `Up to date with ${result.title || 'the linked playlist'}: no new songs.` }
+  if (!added) return { ...result, message: [`Up to date with ${result.title || 'the linked playlist'}: no new songs.`, availability].filter(Boolean).join('; ') }
   const ghosts = Array.isArray(result.ghosts) ? result.ghosts : []
   // The songs are already in the playlist: a failed download start is
   // reported with the sync, not thrown (launch sync carries on too).
@@ -20,6 +22,7 @@ export async function syncPlaylist(playlistId, { userId, client = api, download 
   const parts = [`Added ${plural(added, 'new song')}`]
   if (result.matched) parts.push(`${result.matched} from your library`)
   if (downloads) parts.push(downloads.error ? `downloads couldn't start: ${downloads.error}` : ghostDownloadMessage(downloads))
+  if (availability) parts.push(availability)
   return { ...result, downloads, message: parts.join('; ') }
 }
 
