@@ -106,6 +106,52 @@ test('a later file-move failure rolls back database and restores earlier moves',
   for (const file of [keep, a, b]) assert.ok(fs.existsSync(file))
 })
 
+for (const useCopy of [false, true]) {
+  test(`rollback never overwrites a newly occupied original path (${useCopy ? 'exclusive copy' : 'hard link'})`, async t => {
+    const { db, music, add } = fixture(t)
+    add('keep'); const a = add('a'), b = add('b')
+    const original = fs.readFileSync(a, 'utf8')
+    const rename = fs.renameSync, link = fs.linkSync, copy = fs.copyFileSync
+    t.mock.method(fs, 'renameSync', (from, to) => {
+      if (from === b) throw new Error('Later move failed')
+      return rename(from, to)
+    })
+    t.mock.method(fs, 'linkSync', (from, to) => {
+      if (useCopy) throw Object.assign(new Error('Hard links unsupported'), { code: 'ENOTSUP' })
+      fs.writeFileSync(to, 'new external file', { flag: 'wx' })
+      return link(from, to)
+    })
+    if (useCopy) t.mock.method(fs, 'copyFileSync', (from, to, flags) => {
+      assert.equal(flags, fs.constants.COPYFILE_EXCL)
+      fs.writeFileSync(to, 'new external file', { flag: 'wx' })
+      return copy(from, to, flags)
+    })
+    const result = await mergeDuplicates(db, 'keep', ['a', 'b'])
+    assert.match(result.error, /Some files could not be restored/)
+    assert.equal(fs.readFileSync(a, 'utf8'), 'new external file')
+    const staged = fs.readdirSync(music).filter(name => name.endsWith('.lokal-duplicate'))
+    assert.equal(staged.length, 1)
+    assert.equal(fs.readFileSync(path.join(music, staged[0]), 'utf8'), original)
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM tracks').get().n, 3)
+  })
+}
+
+test('rollback restores audio on volumes without hard-link support', async t => {
+  const { db, music, add } = fixture(t)
+  add('keep'); const a = add('a'), b = add('b')
+  const original = fs.readFileSync(a, 'utf8'), rename = fs.renameSync
+  t.mock.method(fs, 'renameSync', (from, to) => {
+    if (from === b) throw new Error('Later move failed')
+    return rename(from, to)
+  })
+  t.mock.method(fs, 'linkSync', () => { throw Object.assign(new Error('Hard links unsupported'), { code: 'ENOTSUP' }) })
+  const result = await mergeDuplicates(db, 'keep', ['a', 'b'])
+  assert.match(result.error, /Later move failed/)
+  assert.doesNotMatch(result.error, /could not be restored/)
+  assert.equal(fs.readFileSync(a, 'utf8'), original)
+  assert.equal(fs.readdirSync(music).some(name => name.endsWith('.lokal-duplicate')), false)
+})
+
 test('a database failure leaves all audio and references intact', async t => {
   const { db, add } = fixture(t)
   const keep = add('keep'); const remove = add('remove')

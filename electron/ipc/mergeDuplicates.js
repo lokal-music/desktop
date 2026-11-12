@@ -104,8 +104,15 @@ async function mergeDuplicates(db, keepId, removeIds) {
     const unrestored = []
     for (const { file, temporary } of staged.reverse()) {
       try {
-        if (fs.existsSync(file)) throw new Error('The original path is occupied')
-        fs.renameSync(temporary, file)
+        // Restore without ever replacing a new file created at the old path.
+        // Hard links retain metadata; volumes without them use an exclusive
+        // copy and keep the staged original if copying fails.
+        try { fs.linkSync(temporary, file) }
+        catch (error) {
+          if (error.code === 'EEXIST') throw error
+          fs.copyFileSync(temporary, file, fs.constants.COPYFILE_EXCL)
+        }
+        fs.unlinkSync(temporary)
       } catch { unrestored.push(temporary) }
     }
     return { error: unrestored.length
