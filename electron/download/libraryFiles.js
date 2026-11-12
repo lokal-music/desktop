@@ -17,7 +17,7 @@ function stagingDirectory(root, jobId) {
 function hold(file) { const id = key(file); publishing.add(id); return () => publishing.delete(id) }
 function publish(file, root, stage) {
   const relative = path.relative(stage, file)
-  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) throw new Error('Download is outside its staging directory')
+  if (!relative || relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) throw new Error('Download is outside its staging directory')
   let target = path.join(root, relative)
   const ext = path.extname(target), stem = target.slice(0, -ext.length)
   for (let suffix = 1; fs.existsSync(target); suffix++) target = `${stem} (${suffix})${ext}`

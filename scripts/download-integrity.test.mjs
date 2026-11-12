@@ -110,6 +110,18 @@ test('mixes with different qualifiers remain separate downloads', async t => {
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM tracks').get().n, 2)
 })
 
+test('artist names starting with dots are valid publication paths', async t => {
+  const { db, root, audio, download, finish } = fixture(t)
+  const artist = '...And You Will Know Us by the Trail of Dead'
+  const job = download(audio(), { tags: { title: 'Song', artist, album: 'Album' } })
+  await finish(job)
+  assert.equal(job.status, 'done', job.error)
+  const row = db.prepare('SELECT artist, file_path FROM tracks').get()
+  assert.equal(row.artist, artist)
+  assert.equal(path.relative(root, row.file_path), path.join(artist, 'Album', 'Song.flac'))
+  assert.equal((await walkDir(root)).length, 1)
+})
+
 test('ALAC download converts to a decodable FLAC and retains only its final path', async t => {
   const { db, root, audio, download, finish } = fixture(t)
   const job = download(audio('alac'))
