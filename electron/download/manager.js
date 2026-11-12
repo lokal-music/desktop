@@ -540,6 +540,7 @@ class DownloadManager {
     // Merge all playlist requests even when they use exactly the same URL.
     // Addon identities take precedence: a shared endpoint can serve different songs.
     const ref = jobSourceRef(kind, url, opts)
+    const atmosIntent = opts.explicitAtmosDownload === true
     const running = [...this.jobs.values()].find(j => ACTIVE.has(j.status) && !j.stop &&
       (ref ? j.sourceRef === ref : j.url === url && j.kind === kind) &&
       // Distinct explicitly requested renditions must not collapse into
