@@ -14,8 +14,8 @@ function sameFile(left, right) {
   // Windows directories can explicitly enable case sensitivity. Case-folded
   // spelling alone must never merge two distinct files in those directories.
   try {
-    const a = fs.statSync(left), b = fs.statSync(right)
-    return a.ino !== 0 && a.ino === b.ino && a.dev === b.dev
+    const a = fs.statSync(left, { bigint: true }), b = fs.statSync(right, { bigint: true })
+    return a.ino !== 0n && a.ino === b.ino && a.dev === b.dev
   } catch { return false }
 }
 function ensureIndex(db) { db.exec(`CREATE INDEX IF NOT EXISTS idx_tracks_physical_path ON tracks (${expression})`) }
