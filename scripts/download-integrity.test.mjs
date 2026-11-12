@@ -28,8 +28,9 @@ function fixture(t) {
   const mgr = new DownloadManager().configure({ getDB: () => db, getStorageDir: () => path.join(dir, 'data'), index: indexSingleFile, findTools: () => ({ ffmpeg: 'ffmpeg' }) })
   mgr.initialized = true
   mgr.ensureTable()
-  t.after(() => {
+  t.after(async () => {
     watcher.stopWatching()
+    await require('../electron/ipc/scannerMetadata').stopMetadataWorker()
     clearTimeout(mgr.addonWake)
     db.close()
     if (previous === undefined) delete process.env.LOKAL_DATA_DIR
@@ -73,6 +74,8 @@ test('real downloads, a concurrent scan, repeats and a watcher leave one playabl
   await finish(first)
   assert.equal(first.status, 'done', first.error)
   const id = first.indexedTracks[0].id
+  const ownCover = first.filepaths[0].replace(/\.flac$/, '.jpg')
+  fs.writeFileSync(ownCover, 'user artwork')
   mgr.deps.index = indexSingleFile
   const second = download(source, { tags: { title: 'Song', artist: 'Artist', album: 'Compilation' } })
   const third = download(source, { tags: { title: 'Song (Original Mix)', artist: 'Artist', album: 'Another album' } })
@@ -86,6 +89,7 @@ test('real downloads, a concurrent scan, repeats and a watcher leave one playabl
   const rows = db.prepare('SELECT id, file_path FROM tracks').all()
   assert.equal(rows.length, 1)
   assert.equal((await walkDir(root)).length, 1, 'a rescan cannot resurrect redundant physical files')
+  assert.equal(fs.readFileSync(ownCover, 'utf8'), 'user artwork', 'duplicate cleanup must not remove existing artwork')
   for (const job of [first, second, third]) {
     assert.deepEqual(job.filepaths, [rows[0].file_path])
     assert.equal(job.song, rows[0].file_path)

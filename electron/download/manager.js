@@ -1873,20 +1873,12 @@ class DownloadManager {
 
   /** Thumbnails and partial files yt-dlp leaves next to finished tracks. */
   async cleanup(job) {
-    const junk = new Set(['.webp', '.ytdl', '.temp', '.mhtml', '.info.json'])
-    for (const fp of job.filepaths) {
-      const dir = path.dirname(fp)
-      const base = path.basename(fp, path.extname(fp))
-      let siblings = []
-      try { siblings = fs.readdirSync(dir) } catch { continue }
-      for (const file of siblings) {
-        if (!file.startsWith(base + '.')) continue
-        const ext = path.extname(file).toLowerCase()
-        const full = path.join(dir, file)
-        if (junk.has(ext) || file.endsWith('.jpg.part') || (ext === '.jpg' && (() => { try { return fs.statSync(full).size < 51200 } catch { return false } })())) {
-          try { fs.unlinkSync(full) } catch {}
-        }
-      }
+    // Final paths may now refer to an existing user file reused by deduplication.
+    // Only remove this job's private workspace, never that file's siblings.
+    if (job.exitCode === 0 && !job.stop && !job.processingError && !(job.filepaths || []).some(libraryFiles.isIncoming)) {
+      const root = require('../storageLocations').downloadDirectory(job.settings || this.settings(), job.opts.outputDir)
+      const stage = libraryFiles.stagingDirectory(root, job.id)
+      await fs.remove(stage)
     }
     this.clearMusicPlaylistBatch(job)
   }
