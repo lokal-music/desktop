@@ -306,6 +306,9 @@ class DownloadManager {
       }
       this.jobs.set(job.id, job)
     }
+    try {
+      if (require('../libraryPathIdentity').repairSameFileRows(this.db())) this.deps.onLibraryUpdated?.({ repaired: true })
+    } catch (error) { console.warn('[downloads] Same-file repair:', error.message) }
     this.repairMovedDownloads().catch(error => console.warn('[downloads] Moved-file repair:', error.message))
     this.trimHistory()
     this.repairGhostIndexed()
@@ -330,7 +333,7 @@ class DownloadManager {
       if (job.kind !== 'single' && job.kind !== 'soulseek') continue
       const ids = [...new Set((job.indexedTracks || []).map(track => track.id))]
       if (ids.length !== 1) continue
-      const keeper = db.prepare('SELECT id, file_path FROM tracks WHERE id = ?').get(ids[0])
+      const keeper = require('../trackAlias').trackById(db, ids[0])
       if (!keeper || /^ghost:\/\//.test(keeper.file_path) || !fs.existsSync(keeper.file_path)) continue
       // Older queues retained the pre-tagging path even after indexing the
       // final file. Only that exact, job-associated missing row is repaired.
@@ -343,7 +346,7 @@ class DownloadManager {
         try { this.deps.onLibraryUpdated?.({ id: keeper.id, repaired: true }) } catch {}
       }
       job.filepaths = [keeper.file_path]
-      job.indexedTracks = job.indexedTracks.map(track => ({ ...track, filepath: keeper.file_path }))
+      job.indexedTracks = job.indexedTracks.map(track => ({ ...track, id: keeper.id, filepath: keeper.file_path }))
       this.persist(job)
     }
   }

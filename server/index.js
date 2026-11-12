@@ -93,7 +93,7 @@ app.use('/api/quality', require('./routes/quality'))
 const AUDIO_TYPES = { '.mp3': 'audio/mpeg', '.m4a': 'audio/mp4', '.mp4': 'audio/mp4', '.aac': 'audio/aac', '.flac': 'audio/flac', '.ogg': 'audio/ogg', '.oga': 'audio/ogg', '.opus': 'audio/ogg', '.wav': 'audio/wav', '.webm': 'audio/webm' }
 
 app.get('/api/stream/:trackId', async (req, res) => {
-  const track = getDB().prepare('SELECT file_path FROM tracks WHERE id = ?').get(req.params.trackId)
+  const track = require('../electron/trackAlias').trackById(getDB(), req.params.trackId)
   if (!track || !fs.existsSync(track.file_path)) return res.status(404).send('Not found')
   // Browsers can't decode Apple Lossless (and a few others): stream a cached
   // FLAC/AAC copy instead, made once with ffmpeg.
@@ -129,7 +129,7 @@ app.get('/api/artwork/:trackId', async (req, res) => {
   let stored = null
   try {
     db = getDB()
-    stored = db.prepare('SELECT file_path, artwork_path, artwork_url FROM tracks WHERE id = ?').get(id)
+    stored = require('../electron/trackAlias').trackById(db, id)
   } catch {}
 
   if (full && db) {

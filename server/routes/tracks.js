@@ -59,7 +59,7 @@ function possibleDuplicateMatch(left, right) {
   const artistScore = overlapScore(left.artistTokens, right.artistTokens)
   const durationScore = durationSimilarity(left.duration, right.duration)
   const exactNormalized = left.normalizedTitle === right.normalizedTitle && left.normalizedArtist === right.normalizedArtist
-  if (exactNormalized) return null
+  if (exactNormalized || (require('../../electron/recordingIdentity').sameRecording(left, right, Infinity) && require('../../electron/recordingIdentity').editionKey(left) === require('../../electron/recordingIdentity').editionKey(right))) return null
   const combined = titleScore * 0.45 + artistScore * 0.45 + durationScore * 0.1
   const isMatch = durationScore > 0 && artistScore >= 0.72 && (titleScore >= 0.58 || combined >= 0.74)
   if (!isMatch) return null
@@ -144,7 +144,7 @@ function buildPossibleDuplicateGroups(tracks = []) {
   return [...grouped.values()]
     .filter(group => group.length > 1)
     .map((group, index) => {
-      const sortedTracks = [...group].sort((left, right) => right.qualityScore - left.qualityScore)
+      const sortedTracks = [...group].sort((left, right) => require('../../electron/duplicateGroups').tierRank(right) - require('../../electron/duplicateGroups').tierRank(left) || (right.playlist_count || 0) - (left.playlist_count || 0) || right.qualityScore - left.qualityScore)
       const scores = []
       for (let i = 0; i < group.length; i += 1) {
         for (let j = i + 1; j < group.length; j += 1) {
@@ -536,6 +536,10 @@ router.post('/fetch-missing-genres', (req, res) => {
 router.get('/genres-status', (req, res) => res.json(require('../../electron/online/genres').libraryGenresStatus()))
 
 // The library's files in short (see electron/ipc/libraryKeys.js).
+router.post('/owned', async (req, res, next) => {
+  try { res.json(await require('../../electron/libraryOwned').findOwnedTracks(getDB(), req.body?.candidates)) } catch (error) { next(error) }
+})
+
 router.get('/library-keys', (req, res) => {
   try { res.json(require('../../electron/ipc/libraryKeys').libraryKeys(getDB())) } catch (e) { res.json([]) }
 })
@@ -866,14 +870,11 @@ router.get('/:id/related', (req, res) => {
 })
 
 router.get('/duplicates', (req, res) => {
-  res.json(getDB().prepare(`
-    SELECT title, artist, COUNT(*) as count, GROUP_CONCAT(id) as ids, GROUP_CONCAT(file_path) as paths
-    FROM tracks GROUP BY LOWER(title), LOWER(artist) HAVING count > 1
-  `).all())
+  res.json(require('../../electron/duplicateGroups').exactDuplicateGroups(getDB()))
 })
 
 router.get('/possible-duplicates', (req, res) => {
-  const tracks = getDB().prepare("SELECT * FROM tracks WHERE file_path NOT LIKE 'ghost://%' ORDER BY artist, title").all()
+  const tracks = getDB().prepare("SELECT t.*, (SELECT COUNT(DISTINCT playlist_id) FROM playlist_tracks p WHERE p.track_id=t.id) AS playlist_count FROM tracks t WHERE file_path NOT LIKE 'ghost://%' ORDER BY artist, title").all()
   res.json(buildPossibleDuplicateGroups(tracks))
 })
 

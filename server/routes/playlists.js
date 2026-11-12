@@ -474,15 +474,8 @@ function resolveGhostTrack(db, ghostTrackId, targetTrackId, sourceIdentity = nul
   // library file carrying the ghost's metadata. The indexed file has to agree
   // with the requested title/artist first; otherwise leave the ghost unresolved.
   if (options.requireMetadataMatch) {
-    const wantedTitle = normalizeMatchValue(ghost.title)
-    const wantedArtist = normalizeMatchValue(ghost.artist)
-    const actualTitle = normalizeMatchValue(target.title)
-    const actualArtist = normalizeMatchValue(target.artist)
-    const wantedDuration = Number(ghost.duration) || 0
-    const actualDuration = Number(target.duration) || 0
-    const durationMatches = options.allowDurationMismatch === true || !(wantedDuration > 0 && actualDuration > 0) || Math.abs(wantedDuration - actualDuration) <= 10
-    if (!wantedTitle || !wantedArtist || !actualTitle || !actualArtist ||
-        wantedTitle !== actualTitle || wantedArtist !== actualArtist || !durationMatches) {
+    const durationMatches = options.allowDurationMismatch === true || !(Number(ghost.duration) > 0 && Number(target.duration) > 0) || Math.abs(Number(ghost.duration) - Number(target.duration)) <= 10
+    if (!require('../../electron/recordingIdentity').sameRecording(ghost, target, Infinity) || !durationMatches) {
       return {
         ok: false,
         skipped: true,

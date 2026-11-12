@@ -17,6 +17,7 @@ import { readViewState, writeViewState } from './statePersistence.mjs'
 
 const cache = new Map()
 const MAX_PAGE_CACHE_ENTRIES = 32
+export function clearPageCache() { cache.clear() }
 
 function readCache(key) {
   if (!cache.has(key)) return undefined

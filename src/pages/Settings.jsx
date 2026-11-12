@@ -3088,7 +3088,7 @@ activeCategory === 'data' ? usersTried
         
         {dups?.length > 0 && (
           <div className="space-y-3 max-h-96 overflow-y-auto">
-            <p className="text-xs text-muted mb-2">{t("Merge keeps the selected copy and fills missing metadata from the others. Removed copies’ audio files go to Trash on desktop and are permanently deleted in web mode, even when “Delete files too” is off.")}</p>
+            <p className="text-xs text-muted mb-2">{t("Merge relinks all playlists, likes and listening history to the selected copy and fills missing metadata from the others. Removed copies’ audio files go to Trash on desktop and are permanently deleted in web mode, even when “Delete files too” is off.")}</p>
             {dups.map((d, i) => {
               return (
                 <div key={i} className="p-3 bg-card border border-border rounded-xl flex items-center gap-4">
@@ -3148,7 +3148,7 @@ activeCategory === 'data' ? usersTried
         {possibleDups?.length > 0 && (
           <div className="space-y-3">
             <p className="text-xs text-muted">
-              This pass is intentionally review-based. Run the exact duplicate checker first, then use this for tracks that look like the same song but do not have identical names. Keep This removes the other copies’ audio files from your music folder (Trash on desktop; permanently deleted in web mode), even when “Delete files too” is off.
+              Playlist entries, likes and listening history move to the copy you keep. This pass is intentionally review-based. Run the exact duplicate checker first, then use this for tracks that look like the same song but do not have identical names. Keep This removes the other copies’ audio files from your music folder (Trash on desktop; permanently deleted in web mode), even when “Delete files too” is off.
             </p>
             <div className="space-y-3 max-h-[34rem] overflow-y-auto pr-1">
               {possibleDups.map((group) => (

@@ -41,7 +41,7 @@ function registerPlayerHandlers(ipcMain) {
     try {
       // Resolve paths through the library database; never accept a filesystem
       // path from the renderer.
-      const track = getDB().prepare('SELECT file_path FROM tracks WHERE id = ?').get(trackId)
+      const track = require('../trackAlias').trackById(getDB(), trackId)
       if (!track?.file_path || track.file_path.startsWith('ghost://')) return null
       const filePath = path.resolve(track.file_path)
       const stat = await fs.promises.stat(filePath)

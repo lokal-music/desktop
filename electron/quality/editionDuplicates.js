@@ -28,7 +28,7 @@ function findAudioEditionDuplicate(db, { title, artist, album, duration, atmosVe
     // qualifier; a loose token similarity score is unsafe for automatic reuse.
     const candidates = db.prepare(`SELECT * FROM tracks WHERE ABS(duration - ?) < 2 AND file_path NOT LIKE 'ghost://%' AND COALESCE(atmos_verified, 0) = ? AND (${AC4_CODEC_SQL}) = ?`)
       .all(Number(duration), ...edition)
-      .filter(row => recordingText(row.title) === recordingText(title) && recordingText(row.artist) === recordingText(artist))
+      .filter(row => require('../recordingIdentity').sameRecording({ title, artist, duration }, row))
     return candidates.find(row => require('fs').existsSync(row.file_path)) || candidates[0]
   }
   const candidates = db.prepare(`SELECT * FROM tracks WHERE LOWER(title) = ? AND LOWER(artist) = ? AND (album IS NULL OR album = ? OR ? IS NULL) AND ABS(duration - ?) < 2 AND file_path NOT LIKE 'ghost://%' AND COALESCE(atmos_verified, 0) = ? AND (${AC4_CODEC_SQL}) = ?`)

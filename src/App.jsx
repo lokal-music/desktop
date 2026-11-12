@@ -1,3 +1,5 @@
+import { relinkMergedPlayerState } from './mergedTracks.js'
+import { clearPageCache } from './pageCache.js'
 import { NativeAudioBridge, readOutputPreferences, saveOutputPreferences } from './audio/nativeOutput'
 import { createEqualizerRack, loadImpulseFile } from './audio/equalizerGraph.mjs'
 import { loadEqState } from './audio/equalizerConfig.mjs'
@@ -435,6 +437,14 @@ function ViewStateRecorder() {
 
 /** The app shell: header, sidebar, pages, side panels, player and overlays. */
 export default function App() {
+  useEffect(() => {
+    const merged = event => {
+      usePlayerStore.setState(state => relinkMergedPlayerState(state, event.detail))
+      clearPageCache()
+    }
+    window.addEventListener('lokal:tracks-merged', merged)
+    return () => window.removeEventListener('lokal:tracks-merged', merged)
+  }, [])
   // MemoryRouter reads initialEntries only at mount; don't parse localStorage
   // again for every playback-related App render.
   const [initialViewPath] = useState(readSavedRoute)

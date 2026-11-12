@@ -172,7 +172,7 @@ router.post('/files/operations/:operationId/cancel', (req,res) => {
 
 router.get('/files/:trackId', (req, res) => {
   if (!pairedUser(req, res)) return
-  const track = getDB().prepare('SELECT file_path, file_hash FROM tracks WHERE id = ?').get(req.params.trackId)
+  const track = require('../../electron/trackAlias').trackById(getDB(), req.params.trackId)
   if (!track || track.file_path.startsWith('ghost://')) return res.sendStatus(404)
   try {
     const stat = require('fs').statSync(track.file_path)

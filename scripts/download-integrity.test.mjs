@@ -13,6 +13,10 @@ const { indexSingleFile, scanFolder, walkDir } = require('../electron/ipc/scanne
 const files = require('../electron/download/libraryFiles')
 const watcher = require('../electron/libraryWatcher')
 const { parseFile } = require('../electron/musicMetadata')
+const { findOwnedTracks } = require('../electron/libraryOwned')
+const { exactDuplicateGroups } = require('../electron/duplicateGroups')
+const { repairSameFileRows } = require('../electron/libraryPathIdentity')
+const { mergeAllDuplicates } = require('../electron/ipc/mergeDuplicates')
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
 
 function fixture(t) {
@@ -108,6 +112,97 @@ test('mixes with different qualifiers remain separate downloads', async t => {
   await finish(remix)
   assert.equal(remix.status, 'done', remix.error)
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM tracks').get().n, 2)
+})
+
+for (const [title, main, credits] of [
+  ['RIDGE RACER -one more win-', 'Kimara Lovelace', 'Kimara Lovelace, RIDGE RACER Series, Bandai Namco Game Music'],
+  ['Hungry For The Power – Jamie Jones Ridge Street Remix', 'AZARI', 'AZARI, III, Jamie Jones'],
+  ['Ban The Disco – Crackazat Remix', 'Art of Tones', 'Art of Tones, Chatobaron, Crackazat'],
+  ['Perdoname – Sunlightsquare Edit', 'The Sunburst Band', "The Sunburst Band, Sunlightsquare, Dave 'Love' Lee"],
+  ['ひと夜のバカンス', 'SOUL SCREAM', 'SOUL SCREAM'],
+]) {
+  test(`provider-independent ownership and repeat download: ${title}`, async t => {
+    const { db, root, audio, download, finish } = fixture(t)
+    const source = audio()
+    const first = download(source, { tags: { title, artist: main, album: 'Album' } })
+    await finish(first)
+    // More results than either search endpoint returns, including a missing row.
+    for (let i = 0; i < 70; i++) db.prepare('INSERT INTO tracks (id,file_path,file_hash,title,artist,duration) VALUES (?,?,?,?,?,?)')
+      .run(`noise-${i}`, path.join(root, `absent-${i}.flac`), `noise-${i}`, title, 'Someone Else', 3)
+    const [owned, missing, remix] = await findOwnedTracks(db, [
+      { title, artist: credits, duration: 220 },
+      { title, artist: 'Someone Else' },
+      { title: title + ' (Live)', artist: main, duration: 3 },
+    ])
+    assert.equal(owned.id, first.indexedTracks[0].id)
+    assert.equal(missing, null)
+    assert.equal(remix, null)
+    const { downloadMissingProviderTracks, downloadGhostSongs } = await import('../src/ghostDownloads.js')
+    const client = {
+      findOwnedTracks: candidates => findOwnedTracks(db, candidates),
+      getSettings: async () => ({}), onlineProviders: async () => [],
+      searchTracks: () => assert.fail('Owned songs must not depend on capped search'),
+      onlineSearch: () => assert.fail('No provider search for an owned song'),
+      resolveGhostTrack: (ghost, target, options) => require('../server/routes/playlists').resolveGhostTrack(db, ghost, target, null, options),
+    }
+    const options = { client, save: () => assert.fail('Already-owned songs must not start downloads') }
+    assert.equal((await downloadMissingProviderTracks([{ title, artist: credits, duration: 220 }], options)).existing, 1)
+    const ghost = { id: 'imported', title, artist: credits, duration: 220, file_path: 'ghost://spotify/imported' }
+    db.prepare('INSERT INTO tracks (id,file_path,file_hash,title,artist,duration) VALUES (?,?,?,?,?,?)').run(ghost.id, ghost.file_path, ghost.id, title, credits, 220)
+    db.exec("INSERT INTO playlists (id,name) VALUES ('saved','Saved'); INSERT INTO playlist_tracks (playlist_id,track_id,position) VALUES ('saved','imported',0)")
+    assert.equal((await downloadGhostSongs([ghost], options)).existing, 1)
+    assert.equal(db.prepare('SELECT track_id FROM playlist_tracks').get().track_id, first.indexedTracks[0].id)
+    const second = download(source, { tags: { title, artist: credits, album: 'Another release' } })
+    await finish(second)
+    assert.equal(second.indexedTracks[0].id, first.indexedTracks[0].id)
+    await scanFolder(root, { saveRoot: false, watch: false })
+    assert.equal((await walkDir(root)).length, 1)
+    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM tracks WHERE download_source IS NOT NULL").get().n, 1)
+  })
+}
+
+test('bulk merge groups contributor variants and relinks every playlist to the playlist copy', async t => {
+  const { db, root, audio, download, finish } = fixture(t)
+  const job = download(audio(), { tags: { title: 'Ban The Disco – Crackazat Remix', artist: 'Art of Tones', album: 'Album' } })
+  await finish(job)
+  const keeper = job.indexedTracks[0].id
+  const otherFile = path.join(root, 'second.flac')
+  fs.copyFileSync(job.filepaths[0], otherFile)
+  db.prepare('INSERT INTO tracks (id,file_path,file_hash,title,artist,duration,bitrate) VALUES (?,?,?,?,?,?,?)')
+    .run('other', otherFile, 'other', 'Ban The Disco – Crackazat Remix', 'Art of Tones, Chatobaron, Crackazat', 3, 9999)
+  db.exec("INSERT INTO playlists (id,name) VALUES ('p1','First'),('p2','Second'); INSERT INTO playlist_tracks (playlist_id,track_id,position) VALUES ('p1','other',0),('p2','other',5); CREATE TABLE extension_refs(track_id TEXT PRIMARY KEY, value TEXT); INSERT INTO extension_refs VALUES ('other','saved');")
+  // Put the keeper in more playlists, so equal recordings retain the used copy.
+  db.exec(`INSERT INTO playlists (id,name) VALUES ('p3','Third'),('p4','Fourth'),('p5','Fifth');`)
+  for (const playlist of ['p3', 'p4', 'p5']) db.prepare('INSERT INTO playlist_tracks (playlist_id,track_id,position) VALUES (?,?,0)').run(playlist, keeper)
+  const groups = exactDuplicateGroups(db)
+  assert.equal(groups.length, 1)
+  assert.equal(groups[0].count, 2)
+  const result = await mergeAllDuplicates(db, track => track.bitrate || 0)
+  assert.equal(result.error, undefined)
+  assert.equal(result.merged, 1)
+  assert.ok(db.prepare('SELECT track_id FROM playlist_tracks').all().every(row => row.track_id === keeper))
+  assert.equal(db.prepare('SELECT track_id FROM extension_refs').get().track_id, keeper)
+  assert.equal(result.replacements[0].track.id, keeper)
+  assert.equal(db.prepare('SELECT track_id FROM track_aliases WHERE old_id=?').get('other').track_id, keeper)
+  assert.equal(require('../electron/trackAlias').trackById(db, 'other').id, keeper, 'cached playback IDs still resolve after the merge')
+  assert.equal(fs.existsSync(job.filepaths[0]), true)
+  assert.deepEqual(db.pragma('foreign_key_check'), [])
+})
+
+test('Windows path aliases cannot create sourced and unsourced rows for one audio file', { skip: process.platform !== 'win32' }, async t => {
+  const { db, root, audio, download, finish } = fixture(t)
+  const job = download(audio(), { outputDir: root.toLowerCase() })
+  await finish(job)
+  await scanFolder(root, { saveRoot: false, watch: false, forceArtistNameRefresh: true })
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM tracks').get().n, 1)
+  assert.ok(db.prepare('SELECT download_source FROM tracks').get().download_source)
+  const file = job.filepaths[0].replace(/\\/g, '/').toUpperCase()
+  db.prepare('INSERT INTO tracks (id,file_path,file_hash,title,artist,duration) VALUES (?,?,?,?,?,?)').run('alias', file, 'alias', 'Song', 'Artist', 3)
+  db.exec("INSERT INTO playlists (id,name) VALUES ('p','Saved'); INSERT INTO playlist_tracks (playlist_id,track_id,position) VALUES ('p','alias',0)")
+  assert.equal(repairSameFileRows(db), 1)
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM tracks').get().n, 1)
+  assert.equal(db.prepare('SELECT track_id FROM playlist_tracks').get().track_id, job.indexedTracks[0].id)
+  assert.equal(fs.existsSync(job.filepaths[0]), true)
 })
 
 test('artist names starting with dots are valid publication paths', async t => {

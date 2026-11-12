@@ -9,6 +9,15 @@ on:
       - 'electron/ipc/walkMusicFiles.js'
       - 'electron/libraryWatcher.js'
       - 'electron/quality/**'
+      - 'electron/recordingIdentity.js'
+      - 'electron/libraryOwned.js'
+      - 'electron/libraryPathIdentity.js'
+      - 'electron/mergeTrackReferences.js'
+      - 'electron/duplicateGroups.js'
+      - 'electron/trackAlias.js'
+      - 'src/mergedTracks.js'
+      - 'src/ghostDownloads.js'
+      - 'scripts/ghost-downloads.test.mjs'
       - 'scripts/download-integrity.test.mjs'
       - '.github/workflows/download-integrity-ci.yml'
   workflow_dispatch:
@@ -37,4 +46,4 @@ jobs:
       - name: Test real audio, watcher races, deduplication, conversion and reference repair
         env:
           ELECTRON_OVERRIDE_DIST_PATH: ${{ runner.temp }}/unused-electron
-        run: node --test scripts/download-integrity.test.mjs scripts/download-library-sync.test.mjs scripts/library-duplicates.test.mjs scripts/alac-codec.test.mjs scripts/atmos-library-quality.test.mjs scripts/http-addon-downloads.test.mjs scripts/lastwave-download-artwork.test.mjs
+        run: node --test scripts/download-integrity.test.mjs scripts/download-library-sync.test.mjs scripts/library-duplicates.test.mjs scripts/alac-codec.test.mjs scripts/atmos-library-quality.test.mjs scripts/http-addon-downloads.test.mjs scripts/lastwave-download-artwork.test.mjs scripts/ghost-downloads.test.mjs

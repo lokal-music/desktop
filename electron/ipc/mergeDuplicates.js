@@ -64,23 +64,7 @@ async function mergeDuplicates(db, keepId, removeIds) {
             winner[field] = loser[field]
           }
         }
-        db.prepare('UPDATE OR IGNORE playlist_tracks SET track_id = ? WHERE track_id = ?').run(keepId, loser.id)
-        db.prepare('DELETE FROM playlist_tracks WHERE track_id = ?').run(loser.id)
-        db.prepare('UPDATE OR IGNORE user_likes SET track_id = ? WHERE track_id = ?').run(keepId, loser.id)
-        db.prepare('DELETE FROM user_likes WHERE track_id = ?').run(loser.id)
-        db.prepare('UPDATE play_history SET track_id = ? WHERE track_id = ?').run(keepId, loser.id)
-        db.prepare('UPDATE listening_events SET track_id = ? WHERE track_id = ?').run(keepId, loser.id)
-        db.prepare('UPDATE tracks SET play_count = COALESCE(play_count, 0) + ?, liked = MAX(liked, ?) WHERE id = ?')
-          .run(loser.play_count || 0, loser.liked || 0, keepId)
-        db.prepare('UPDATE track_aliases SET track_id = ? WHERE track_id = ?').run(keepId, loser.id)
-        db.prepare('INSERT OR REPLACE INTO track_aliases (old_id, track_id) VALUES (?, ?)').run(loser.id, keepId)
-        for (const table of ['artist_track_links', 'lyrics_cache', 'lyrics_translations']) {
-          db.prepare(`DELETE FROM ${table} WHERE track_id = ?`).run(loser.id)
-        }
-        if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'artist_link_locks'").get()) {
-          db.prepare('DELETE FROM artist_link_locks WHERE track_id = ?').run(loser.id)
-        }
-        db.prepare('DELETE FROM tracks WHERE id = ?').run(loser.id)
+        require('../mergeTrackReferences').mergeTrackReferences(db, keepId, loser)
       }
       for (const file of files.values()) {
         // An unrecognized extension keeps even a failed Trash operation out of scans.
@@ -126,26 +110,30 @@ async function mergeDuplicates(db, keepId, removeIds) {
   }
   return {
     ok: true, merged: losers.length,
+    replacements: [{ removedIds: losers.map(track => track.id), track: db.prepare('SELECT * FROM tracks WHERE id=?').get(keepId) }],
     ...(failed.length ? { warning: `Duplicates were removed from the library, but some files could not be moved to Trash. They will not be rescanned. Remove these files manually: ${failed.join(', ')}` } : {}),
   }
 }
 
 async function mergeAllDuplicates(db, scoreTrack) {
-  const groups = db.prepare('SELECT GROUP_CONCAT(id) AS ids FROM tracks GROUP BY LOWER(title), LOWER(artist) HAVING COUNT(*) > 1').all()
+  const groups = require('../duplicateGroups').exactDuplicateGroups(db)
   let merged = 0
   const errors = []
   const warnings = []
+  const replacements = []
   for (const group of groups) {
-    const tracks = group.ids.split(',').map(id => db.prepare('SELECT * FROM tracks WHERE id = ?').get(id)).filter(Boolean)
+    const tracks = group.tracks || group.ids.split(',').map(id => db.prepare('SELECT * FROM tracks WHERE id = ?').get(id)).filter(Boolean)
     const available = new Set(tracks.filter(availableFile).map(track => track.id))
-    tracks.sort((a, b) => Number(available.has(b.id)) - Number(available.has(a.id)) || scoreTrack(b) - scoreTrack(a))
+    const { tierRank } = require('../duplicateGroups')
+    tracks.sort((a, b) => Number(available.has(b.id)) - Number(available.has(a.id)) || tierRank(b) - tierRank(a) || (b.playlist_count || 0) - (a.playlist_count || 0) || scoreTrack(b) - scoreTrack(a))
     if (tracks.length < 2) continue
     const result = await mergeDuplicates(db, tracks[0].id, tracks.slice(1).map(track => track.id))
     merged += result.merged || 0
+    replacements.push(...(result.replacements || []))
     if (result.error) errors.push(result.error)
     if (result.warning) warnings.push(result.warning)
   }
-  return { merged, groups: groups.length,
+  return { merged, groups: groups.length, replacements,
     ...(errors.length ? { error: `${errors.length} group(s) could not be merged. ${[...new Set(errors)].join(' ')}` } : {}),
     ...(warnings.length ? { warning: warnings.join(' ') } : {}),
   }

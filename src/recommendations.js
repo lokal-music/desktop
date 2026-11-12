@@ -311,7 +311,7 @@ export async function resolveRecommendationTracks(candidates, client = api, opti
       const rows = Array.isArray(local) ? local : Array.isArray(local?.tracks) ? local.tracks : []
       // Imported ghosts and previously cached streams must not override a newly
       // configured provider order. Only a real library file takes precedence.
-      let row = rows.find(track => playableRecommendation(track) && !track.file_path.startsWith('ghost://') && songKey(track) === songKey(candidate) && matchingDuration(candidate, track))
+      let row = recommendationMatch(candidate, rows.filter(track => playableRecommendation(track) && !track.missing && !track.file_path.startsWith('ghost://')))
       if (!row) {
         // Warm at most three HTTP metadata lookups concurrently when a
         // recommendation reaches those providers. Only actual playback

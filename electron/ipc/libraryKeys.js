@@ -26,6 +26,7 @@ function libraryKeys(db = getDB()) {
 
 function registerLibraryKeysHandlers(ipcMain) {
   ipcMain.handle('library:keys', () => libraryKeys())
+  ipcMain.handle('library:owned', (_, candidates) => require('../libraryOwned').findOwnedTracks(getDB(), candidates))
 }
 
 module.exports = { libraryKeys, registerLibraryKeysHandlers }
