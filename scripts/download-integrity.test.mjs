@@ -16,6 +16,7 @@ const { parseFile } = require('../electron/musicMetadata')
 const { findOwnedTracks } = require('../electron/libraryOwned')
 const { exactDuplicateGroups } = require('../electron/duplicateGroups')
 const { repairSameFileRows } = require('../electron/libraryPathIdentity')
+const { sameFile } = require('../electron/libraryPathIdentity')
 const { mergeAllDuplicates } = require('../electron/ipc/mergeDuplicates')
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
 
@@ -203,6 +204,18 @@ test('Windows path aliases cannot create sourced and unsourced rows for one audi
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM tracks').get().n, 1)
   assert.equal(db.prepare('SELECT track_id FROM playlist_tracks').get().track_id, job.indexedTracks[0].id)
   assert.equal(fs.existsSync(job.filepaths[0]), true)
+})
+
+test('file identity distinguishes distinct audio from aliases without changing either file', t => {
+  const { dir, audio } = fixture(t)
+  const first = audio()
+  const second = path.join(dir, 'different.flac')
+  fs.copyFileSync(first, second)
+  assert.equal(sameFile(first, path.join(dir, '.', path.basename(first))), true)
+  assert.equal(sameFile(first, second), false)
+  assert.equal(sameFile(first, path.join(dir, 'missing.flac')), false)
+  assert.equal(fs.existsSync(first), true)
+  assert.equal(fs.existsSync(second), true)
 })
 
 test('artist names starting with dots are valid publication paths', async t => {

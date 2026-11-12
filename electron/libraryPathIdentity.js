@@ -1,11 +1,22 @@
 const path = require('path')
+const fs = require('fs')
 const expression = process.platform === 'win32' ? "LOWER(REPLACE(file_path, char(92), '/'))" : 'file_path'
 function pathKey(file) {
   const resolved = path.resolve(file)
   return process.platform === 'win32' ? resolved.replace(/\\/g, '/').toLowerCase() : resolved
 }
 function findByPath(db, file) {
-  return db.prepare(`SELECT * FROM tracks WHERE ${expression} = ? ORDER BY (download_source IS NOT NULL) DESC LIMIT 1`).get(pathKey(file))
+  return db.prepare(`SELECT * FROM tracks WHERE ${expression} = ? ORDER BY (download_source IS NOT NULL) DESC`).all(pathKey(file))
+    .find(row => sameFile(row.file_path, file))
+}
+function sameFile(left, right) {
+  if (path.resolve(left) === path.resolve(right)) return true
+  // Windows directories can explicitly enable case sensitivity. Case-folded
+  // spelling alone must never merge two distinct files in those directories.
+  try {
+    const a = fs.statSync(left), b = fs.statSync(right)
+    return a.ino !== 0 && a.ino === b.ino && a.dev === b.dev
+  } catch { return false }
 }
 function ensureIndex(db) { db.exec(`CREATE INDEX IF NOT EXISTS idx_tracks_physical_path ON tracks (${expression})`) }
 function repairSameFileRows(db) {
@@ -15,6 +26,7 @@ function repairSameFileRows(db) {
     for (const group of groups) {
       const rows = db.prepare(`SELECT * FROM tracks WHERE ${expression}=? ORDER BY (download_source IS NOT NULL) DESC, COALESCE(play_count,0) DESC`).all(group.identity)
       for (const loser of rows.slice(1)) {
+        if (!sameFile(rows[0].file_path, loser.file_path)) continue
         require('./mergeTrackReferences').mergeTrackReferences(db, rows[0].id, loser)
         repaired++
       }
@@ -30,4 +42,4 @@ function repairSameFileRows(db) {
   })()
   return repaired
 }
-module.exports = { pathKey, expression, findByPath, ensureIndex, repairSameFileRows }
+module.exports = { pathKey, expression, findByPath, ensureIndex, repairSameFileRows, sameFile }
