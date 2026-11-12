@@ -16,6 +16,7 @@
 //     while yt-dlp carries on with the next one.
 
 const { spawn } = require('child_process')
+const crypto = require('crypto')
 const { AC4_CODEC_SQL } = require('../quality/editionDuplicates')
 const path = require('path')
 const os = require('os')
@@ -28,6 +29,7 @@ const slskd = require('./slskd')
 const { sourceIdentity, onlineTrackId, streamedTwins, sourceRefOf, sourceRefOfTrack, addonDownloadRequest } = require('../online/sources')
 const { readInfo, coverThumbnail, imageThumbnail } = require('./tagger')
 const { makePlayable } = require('./convert')
+const libraryFiles = require('./libraryFiles')
 
 const ACTIVE = new Set(['queued', 'downloading'])
 const RETRY_DELAYS_MS = [5000, 20000]
@@ -304,6 +306,7 @@ class DownloadManager {
       }
       this.jobs.set(job.id, job)
     }
+    this.repairMovedDownloads().catch(error => console.warn('[downloads] Moved-file repair:', error.message))
     this.trimHistory()
     this.repairGhostIndexed()
     if (resumed) setTimeout(() => this.pump(), 4000)
@@ -314,9 +317,35 @@ class DownloadManager {
   /** The library track downloaded from the online song `ref`, or null. */
   libraryTrackWithRef(ref, { atmos = false } = {}) {
     try {
-      const track = this.db().prepare(`SELECT id, title, file_path, atmos_verified FROM tracks WHERE source_ref = ? AND file_path NOT LIKE 'ghost://%' AND ((COALESCE(atmos_verified, 0) = 1 OR (${AC4_CODEC_SQL})) = ?) LIMIT 1`).get(ref, atmos ? 1 : 0)
-      return track && fs.existsSync(track.file_path) ? track : null
+      const tracks = this.db().prepare(`SELECT id, title, file_path, atmos_verified FROM tracks WHERE source_ref = ? AND file_path NOT LIKE 'ghost://%' AND ((COALESCE(atmos_verified, 0) = 1 OR (${AC4_CODEC_SQL})) = ?)`).all(ref, atmos ? 1 : 0)
+      return tracks.find(track => fs.existsSync(track.file_path)) || null
     } catch { return null }
+  }
+
+  async repairMovedDownloads() {
+    const db = this.db()
+    const { mergeDuplicates } = require('../ipc/mergeDuplicates')
+    for (const job of [...this.jobs.values()]) {
+      if (ACTIVE.has(job.status) || job.pendingIndex?.length) continue
+      if (job.kind !== 'single' && job.kind !== 'soulseek') continue
+      const ids = [...new Set((job.indexedTracks || []).map(track => track.id))]
+      if (ids.length !== 1) continue
+      const keeper = db.prepare('SELECT id, file_path FROM tracks WHERE id = ?').get(ids[0])
+      if (!keeper || /^ghost:\/\//.test(keeper.file_path) || !fs.existsSync(keeper.file_path)) continue
+      // Older queues retained the pre-tagging path even after indexing the
+      // final file. Only that exact, job-associated missing row is repaired.
+      const stale = (job.filepaths || []).filter(file => file !== keeper.file_path && !fs.existsSync(file))
+        .map(file => db.prepare('SELECT id FROM tracks WHERE file_path = ?').get(file))
+        .filter(row => row && row.id !== keeper.id)
+      if (stale.length) {
+        const result = await mergeDuplicates(db, keeper.id, stale.map(row => row.id))
+        if (!result.ok) continue
+        try { this.deps.onLibraryUpdated?.({ id: keeper.id, repaired: true }) } catch {}
+      }
+      job.filepaths = [keeper.file_path]
+      job.indexedTracks = job.indexedTracks.map(track => ({ ...track, filepath: keeper.file_path }))
+      this.persist(job)
+    }
   }
 
   /** Is `trackId` a streamed (ghost) track of the online song `ref`? */
@@ -782,6 +811,7 @@ class DownloadManager {
     this.update(job, {
       status: 'queued', message: 'Queued', error: null, progress: 0, speed: null, eta: null,
       attempt: 0, finishedAt: null, retryAt: null, withoutCookies: false, stop: null, seen: false,
+      processingError: null, libraryFailures: 0,
       triedToolUpdate: false, triedClients: false, extraArgs: null, waitingForTools: false, removed: false,
     }, { persist: true })
     this.pump()
@@ -955,7 +985,7 @@ class DownloadManager {
     }
     const { ytdlp, ffmpeg } = check.tools
     const settings = this.settings()
-    const outputDir = require('../storageLocations').downloadDirectory(settings, job.opts.outputDir)
+    const outputDir = libraryFiles.stagingDirectory(require('../storageLocations').downloadDirectory(settings, job.opts.outputDir), job.id)
     try { fs.ensureDirSync(outputDir) } catch {}
     const format = resolveFormat(job.opts, settings)
     job.opts.format = format.format
@@ -1096,8 +1126,7 @@ class DownloadManager {
     Promise.resolve().then(async () => {
       artifact = await loadArtifact(controller)
       controller.signal.throwIfAborted()
-      const outputDir = require('../storageLocations').downloadDirectory(job.settings, job.opts.outputDir)
-      fs.ensureDirSync(outputDir)
+      const outputDir = libraryFiles.stagingDirectory(require('../storageLocations').downloadDirectory(job.settings, job.opts.outputDir), job.id)
       const title = String(job.title || 'Addon Track').replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/[. ]+$/, '').slice(0,180)
       // M4A retains the MP4 container and is recognized by the library scanner.
       const ext = job.opts.explicitAtmosDownload
@@ -1313,7 +1342,7 @@ class DownloadManager {
     }
     const clean = (s) => String(s || '').replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').replace(/[. ]+$/, '').trim().slice(0, 120)
     const info = readInfo(found) || {}
-    const musicDir = require('../storageLocations').downloadDirectory(job.settings, job.opts.outputDir)
+    const musicDir = libraryFiles.stagingDirectory(require('../storageLocations').downloadDirectory(job.settings, job.opts.outputDir), job.id)
     const artist = clean(String(info.artist || '').split(/;|\s\/\s/)[0]) || 'Unknown Artist'
     const album = clean(info.album) || clean(slskd.splitRemote(job.opts.filename).folder) || 'Singles'
     const base = path.basename(found)
@@ -1340,15 +1369,17 @@ class DownloadManager {
   /** Finishes and indexes one file, in the background, one at a time per job. */
   afterFile(job, filepath, meta = null) {
     job.post = job.post.then(async () => {
+      const originalPath = filepath
       let finalPath = filepath
       try {
         if (!job.stop) this.update(job, { message: `Adding lyrics: ${path.basename(filepath)}` })
-        const outputDir = require('../storageLocations').downloadDirectory(job.settings, job.opts.outputDir)
+        const root = require('../storageLocations').downloadDirectory(job.settings, job.opts.outputDir)
+        const outputDir = libraryFiles.isIncoming(filepath) ? libraryFiles.stagingDirectory(root, job.id) : root
         // Apple Lossless and other codecs the player can't decode: FLAC (or AAC) first.
         // Never transcode E-AC-3 JOC to AAC in the ordinary Chromium
         // compatibility pipeline: Atmos is saved as a verified bitstream.
         const playable = job.opts.explicitAtmosDownload ? filepath
-          : await makePlayable(filepath, { ffmpeg: this.deps.findTools?.()?.ffmpeg })
+          : await makePlayable(filepath, { ffmpeg: this.deps.findTools?.()?.ffmpeg, strict: true })
         if (playable !== filepath) {
           job.outputLines.push(`[Lokal] Converted ${path.basename(filepath)} to ${path.extname(playable).slice(1).toUpperCase()} so it plays in Lokal`)
           const fileIndex = job.filepaths.indexOf(filepath)
@@ -1369,23 +1400,10 @@ class DownloadManager {
           ? { filePath: filepath, lyrics: null, cover: false }
           : await finishFile(filepath, { db: this.db(), settings, url: job.url, meta, kind: job.kind, outputDir, known: job.opts?.tags || null, recoverArtwork: !!job.opts?.addonSource })
         finalPath = done.filePath
-        // Explicit output paths and lossless replacements keep their own destinations.
-        const downloadFolder = String(job.settings?.download_folder || '').trim()
-        if (downloadFolder && !job.opts?.outputDir && !job.opts?.upgradeTrackId) {
-          const assigned = job.downloadFolderNumbers || (job.downloadFolderNumbers = {})
-          const originalPath = finalPath
-          const placed = require('../downloadFolder').placeDownload(this.db(), finalPath, downloadFolder, assigned, job.settings?.download_root)
-          if (placed.filePath !== originalPath) {
-            const fileIndex = job.filepaths.indexOf(originalPath)
-            if (fileIndex >= 0) job.filepaths[fileIndex] = placed.filePath
-            job.pendingIndex = (job.pendingIndex || []).map(fp => fp === originalPath ? placed.filePath : fp)
-            job.outputLines.push('[Lokal] Moved to ' + placed.filePath)
-            finalPath = placed.filePath
-            done.filePath = placed.filePath
-          }
-        }
-        // Stamp after moving so the tag and index both refer to the final path.
+        this.moveJobPath(job, filepath, finalPath)
+        // All writes finish in private staging before the scanner sees it.
         if (!job.opts?.upgradeTrackId) require('../addedDate').stampNewFile(this.db(), finalPath)
+        if (!job.opts.explicitAtmosDownload) await require('./convert').validateAudio(finalPath, { ffmpeg: this.deps.findTools?.()?.ffmpeg })
         const name = path.basename(finalPath)
         if (!job.downloadedTracks.includes(name)) job.downloadedTracks.push(name)
         if (job.musicPlaylistBatchFile && job.totalTracks) {
@@ -1407,9 +1425,12 @@ class DownloadManager {
         job.outputLines.push(done.lyrics
           ? `[Lokal] Lyrics added (${done.lyrics === 'syllable' ? 'word by word' : done.lyrics === 'line' ? 'line by line' : 'plain text'}, ${done.lyricsSource}): ${name}`
           : `[Lokal] No lyrics found for ${name}`)
-      } catch {
-        const name = path.basename(filepath)
-        if (!job.downloadedTracks.includes(name)) job.downloadedTracks.push(name)
+      } catch (error) {
+        job.libraryFailures = (job.libraryFailures || 0) + 1
+        job.processingError = `Could not prepare ${path.basename(originalPath)}: ${error.message || error}`
+        job.outputLines.push('[Lokal] ' + job.processingError)
+        this.update(job, { message: job.processingError }, { persist: true })
+        return
       }
       const index = this.deps.index
       if ((index || job.opts?.upgradeTrackId) && (job.settings?.index_while_downloading === '1' || job.kind === 'single' || job.kind === 'soulseek')) {
@@ -1417,11 +1438,62 @@ class DownloadManager {
       } else {
         job.pendingIndex = [...(job.pendingIndex || []), finalPath]
       }
-      this.update(job, { song: finalPath }, { persist: true })
+      this.update(job, { song: job.filepaths[job.filepaths.length - 1] || finalPath }, { persist: true })
     })
   }
 
+  moveJobPath(job, before, after) {
+    if (before === after) return
+    job.filepaths = (job.filepaths || []).map(fp => fp === before ? after : fp)
+    job.pendingIndex = (job.pendingIndex || []).map(fp => fp === before ? after : fp)
+    if (job.song === before) job.song = after
+  }
+
   async indexOne(job, filepath) {
+    if (!libraryFiles.isIncoming(filepath)) return this.indexPublishedFile(job, filepath)
+    const commit = async () => {
+      const releases = []
+      try {
+        job.settings ||= this.settings()
+        const root = require('../storageLocations').downloadDirectory(job.settings, job.opts.outputDir)
+        const published = libraryFiles.publish(filepath, root, libraryFiles.stagingDirectory(root, job.id))
+        releases.push(published.release)
+        let finalPath = published.filePath
+        const folder = String(job.settings?.download_folder || '').trim()
+        if (folder && !job.opts.outputDir && !job.opts.upgradeTrackId) {
+          const assigned = job.downloadFolderNumbers || (job.downloadFolderNumbers = {})
+          const placed = require('../downloadFolder').placeDownload(this.db(), finalPath, folder, assigned, job.settings?.download_root)
+          finalPath = placed.filePath
+          releases.push(libraryFiles.hold(finalPath))
+          if (placed.error) job.outputLines.push('[Lokal] ' + placed.error)
+        }
+        this.moveJobPath(job, filepath, finalPath)
+        this.persist(job)
+        const result = await this.indexPublishedFile(job, finalPath, { owned: true })
+        if (result?.error) {
+          job.processingError = result.error
+          job.downloadedTracks = (job.downloadedTracks || []).filter(name => name !== path.basename(finalPath))
+          const indexed = this.db().prepare('SELECT id FROM tracks WHERE file_path = ?').get(finalPath)
+          if (!indexed && fs.existsSync(finalPath)) {
+            const rejected = path.join(libraryFiles.stagingDirectory(root, job.id), `rejected-${crypto.randomUUID()}${path.extname(finalPath)}`)
+            fs.moveSync(finalPath, rejected, { overwrite: false })
+            this.moveJobPath(job, finalPath, rejected)
+          }
+        }
+        return result
+      } catch (error) {
+        job.libraryFailures = (job.libraryFailures || 0) + 1
+        job.processingError = `Could not add download: ${error.message || error}`
+        job.outputLines.push('[Lokal] ' + job.processingError)
+        return { error: job.processingError }
+      } finally { for (const release of releases) release() }
+    }
+    const pending = (this.libraryCommit || Promise.resolve()).then(commit, commit)
+    this.libraryCommit = pending.catch(() => {})
+    return pending
+  }
+
+  async indexPublishedFile(job, filepath, { owned = false } = {}) {
     // "Get it in lossless": this file replaces a track's file, keeping the
     // track (playlists, likes, history). If that can't be done, it is added
     // as a track of its own below, as usual.
@@ -1445,6 +1517,8 @@ class DownloadManager {
       const videoId = job.kind === 'single' ? youTubeId(job.url) : null
       const result = await index(filepath, {
         deferGhostResolution: true,
+        downloadPublication: owned,
+        recordingMatch: true,
         thumbnailUrl: videoId ? `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg` : undefined,
         metadata: job.opts?.tags
           ? {
@@ -1461,19 +1535,17 @@ class DownloadManager {
         this.update(job, { message: 'Downloaded, but not added to the library', removed: false }, { persist: true })
         return result
       }
+      if (job.opts?.explicitAtmosDownload && result?.duplicate) {
+        this.retireDuplicate(job, filepath, result.id, owned)
+        job.outputLines.push('[Lokal] This Dolby Atmos edition is already indexed')
+        this.update(job, { message: 'Atmos edition already in library', removed: false }, { persist: true })
+        return { ...result, libraryAdded: false }
+      }
       // The same song, downloaded before (from YouTube, say) and now in better
       // quality (an addon's FLAC): the new file takes the old one's place in
       // its track, which keeps its playlists, likes and history. Otherwise
       // indexing would only see a duplicate and leave the new file out of the
       // library (a later rescan then added it as a file of unknown source).
-      if (job.opts?.explicitAtmosDownload && result?.duplicate) {
-        // A second Atmos edition already exists (perhaps from another addon).
-        // Do not claim this downloaded file was added to the library when
-        // the scanner correctly returned the existing Atmos row instead.
-        job.outputLines.push('[Lokal] This Dolby Atmos edition is already indexed; downloaded copy kept on disk')
-        this.update(job, { message: 'Downloaded · Atmos edition already in library', removed: false }, { persist: true })
-        return { ...result, libraryAdded: false }
-      }
       const upgraded = !job.opts?.explicitAtmosDownload && result?.duplicate && result.id
         ? await this.replaceWorseCopy(job, result.id, filepath) : false
       if (result?.id) {
@@ -1599,6 +1671,10 @@ class DownloadManager {
         // Only now does the list show the song (which refreshes the library
         // pages): once it has taken the streamed version's place, so a
         // playlist or Liked Songs doesn't reload in between.
+        const canonical = result.duplicate && !upgraded ? this.retireDuplicate(job, filepath, result.id, owned)
+          : this.db().prepare('SELECT file_path FROM tracks WHERE id = ?').get(result.id)?.file_path || filepath
+        this.moveJobPath(job, filepath, canonical)
+        filepath = canonical
         job.indexedTracks.push({ filepath, id: result.id, title: path.basename(filepath, path.extname(filepath)) })
         this.update(job, { message: `Added to library: ${path.basename(filepath)}`, removed: false }, { force: true })
         try { this.deps.onLibraryUpdated?.(result) } catch {}
@@ -1611,6 +1687,24 @@ class DownloadManager {
       this.update(job, { message: 'Downloaded, but not added to the library', removed: false }, { persist: true })
       return { error: error.message || String(error), libraryAdded: false }
     }
+  }
+
+  retireDuplicate(job, filepath, id, owned) {
+    const canonical = this.db().prepare('SELECT file_path FROM tracks WHERE id = ?').get(id)?.file_path || filepath
+    if (owned && path.resolve(canonical) !== path.resolve(filepath) && fs.existsSync(canonical)) {
+      // Move out of the library before deletion; a failed unlink must not let
+      // a rescan resurrect the rejected copy. Only this job's new file moves.
+      const root = require('../storageLocations').downloadDirectory(job.settings || this.settings(), job.opts.outputDir)
+      const dir = libraryFiles.stagingDirectory(root, job.id)
+      const retired = path.join(dir, `redundant-${crypto.randomUUID()}${path.extname(filepath)}`)
+      fs.moveSync(filepath, retired, { overwrite: false })
+      try { fs.removeSync(retired) } catch {}
+      for (const ext of ['.lrc', '.elrc', '.ttml', '.txt']) {
+        try { fs.removeSync(filepath.slice(0, -path.extname(filepath).length) + ext) } catch {}
+      }
+      this.moveJobPath(job, filepath, canonical)
+    }
+    return canonical
   }
 
   /**
@@ -1677,6 +1771,11 @@ class DownloadManager {
     const partial = job.kind === 'playlist' && job.downloadedTracks.length > (job.tracksAtStart || 0)
     const failures = job.libraryFailures || 0
     const libraryWarning = failures ? ` · ${failures} not added to library` : ''
+    if (code === 0 && !err && job.processingError && !job.downloadedTracks.length) {
+      this.markPlaylist(job, 'failed')
+      this.update(job, { status: 'error', error: job.processingError, message: job.processingError, finishedAt: Date.now() }, { persist: true })
+      return
+    }
     if (code === 0 && !err) {
       this.markPlaylist(job, 'completed')
       const n = job.downloadedTracks.length

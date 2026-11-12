@@ -1,0 +1,40 @@
+name: Download library integrity
+
+on:
+  pull_request:
+    paths:
+      - 'electron/download/**'
+      - 'electron/downloadFolder.js'
+      - 'electron/ipc/scanner.js'
+      - 'electron/ipc/walkMusicFiles.js'
+      - 'electron/libraryWatcher.js'
+      - 'electron/quality/**'
+      - 'scripts/download-integrity.test.mjs'
+      - '.github/workflows/download-integrity-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  downloads:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: FedericoCarboni/setup-ffmpeg@v3
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm rebuild better-sqlite3
+      - name: Test real audio, watcher races, deduplication, conversion and reference repair
+        env:
+          ELECTRON_OVERRIDE_DIST_PATH: ${{ runner.temp }}/unused-electron
+        run: node --test scripts/download-integrity.test.mjs scripts/download-library-sync.test.mjs scripts/library-duplicates.test.mjs scripts/alac-codec.test.mjs scripts/atmos-library-quality.test.mjs scripts/http-addon-downloads.test.mjs scripts/lastwave-download-artwork.test.mjs

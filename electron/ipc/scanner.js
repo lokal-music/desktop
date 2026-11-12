@@ -31,6 +31,7 @@ const { artistIdFromName, findArtistById, migrateUnknownArtist, resolveArtistId,
 const DEFAULT_MUSIC_PATH = 'C:\\Users\\sipbuu\\Music'
 const { walkDir, AUDIO_EXTS } = require('./walkMusicFiles')
 const { isPrivatePhoneUploadPath } = require('../phoneUploadPaths')
+const downloadFiles = require('../download/libraryFiles')
 const { isPreparedStemClipName } = require('../automix/stem-clip')
 // Same secrets as the web server's SECRET_KEYS (server/routes/settings.js):
 // Masked by settings:get, omitted by default from exports, kept on import.
@@ -481,6 +482,7 @@ async function scanFolder(folderPath, {
 
   const insertBatchTransaction = db.transaction((items) => {
     for (const item of items) {
+      if (downloadFiles.isHidden(item.file_path)) continue
       const existing = findExistingTrackByPath.get(item.file_path)
       const trackId = existing?.id || item.id
       item.id = trackId
@@ -508,6 +510,16 @@ async function scanFolder(folderPath, {
     }
   })
   const insertBatch = async (items) => {
+    // A download or tag editor can move a file while metadata is being read.
+    // Recheck asynchronously: a disconnected NAS must not block Electron.
+    const current = await Promise.all(items.map(async item => {
+      if (downloadFiles.isHidden(item.file_path)) return null
+      try {
+        const stat = await require('./networkLibrary').withTimeout(fsp.stat)(item.file_path)
+        return 't-' + hashFile(item.file_path, stat) === item.file_hash ? item : null
+      } catch { return null }
+    }))
+    items = current.filter(item => item && !downloadFiles.isHidden(item.file_path))
     insertBatchTransaction(items)
     // New entries without a LOKAL_ADDED tag take the library's date and write
     // it into the file. Existing entries are deliberately not re-dated.
@@ -560,6 +572,7 @@ async function scanFolder(folderPath, {
   }
 
   for (const filePath of files) {
+    if (downloadFiles.isHidden(filePath)) continue
     try {
       const stat = await require('./networkLibrary').withTimeout(fsp.stat)(filePath)
       const trackId = 't-' + hashFile(filePath, stat)
@@ -2031,10 +2044,11 @@ function updateTrackArtistLinks(db, trackId, artist) {
 }
 
 async function indexSingleFile(filePath, opts = {}) {
-  if (isPrivatePhoneUploadPath(filePath)) return null
+  if (isPrivatePhoneUploadPath(filePath) || (!opts.downloadPublication && downloadFiles.isHidden(filePath))) return null
   const db = getDB()
   const stat = fs.statSync(filePath)
-  const trackId = 't-' + hashFile(filePath, stat)
+  let trackId = 't-' + hashFile(filePath, stat)
+  const fileHash = trackId
   const existing = db.prepare('SELECT * FROM tracks WHERE file_hash = ? OR file_path = ?').get(trackId, filePath)
   if (existing) {
     const wanted = opts.metadata || {}
@@ -2154,7 +2168,7 @@ async function indexSingleFile(filePath, opts = {}) {
   // imports where the scanner is invoked before the normal quality migration).
   quality.ensureColumns(db)
   const dupe = findAudioEditionDuplicate(db, {
-    title, artist, album, duration, atmosVerified: audioQuality.atmos_verified, codec: audioQuality.codec,
+    title, artist, album, duration, atmosVerified: audioQuality.atmos_verified, codec: audioQuality.codec, recordingMatch: opts.recordingMatch,
   })
   if (dupe) {
     // A previous download may have left its database row behind after the
@@ -2174,10 +2188,11 @@ async function indexSingleFile(filePath, opts = {}) {
     
 
     const existingByPath = db.prepare('SELECT id FROM tracks WHERE file_path = ?').get(filePath)
+    if (existingByPath) trackId = existingByPath.id
     const params = trackParams({
       id: trackId,
       file_path: filePath,
-      file_hash: trackId,
+      file_hash: fileHash,
       title,
       artist,
       album,
@@ -2214,6 +2229,11 @@ async function indexSingleFile(filePath, opts = {}) {
     if (!opts.deferGhostResolution) resolveGhostsByIsrc(db, trackId)
   })
   
+  try {
+    const current = fs.statSync(filePath)
+    if (current.size !== stat.size || current.mtimeMs !== stat.mtimeMs) return { error: 'Audio file changed while being indexed; retry the scan' }
+  } catch { return { error: 'Audio file moved or disappeared while being indexed' } }
+  if (!opts.downloadPublication && downloadFiles.isHidden(filePath)) return null
   insertTransaction()
   if (added == null) {
     try { await addedDate.stampAddedDates(db, [filePath]) } catch (error) { console.warn('[indexSingleFile] Date-added tag skipped:', error.message) }
@@ -2268,7 +2288,7 @@ async function applyFileChanges(changes = [], activeRoots) {
     if (!rawPath) continue
     const filePath = path.resolve(String(rawPath))
     // Prepared stem clips are internal transition cache, not library songs.
-    if (isPreparedStemClipName(filePath) || isPrivatePhoneUploadPath(filePath)) continue
+    if (isPreparedStemClipName(filePath) || isPrivatePhoneUploadPath(filePath) || downloadFiles.isHidden(filePath)) continue
     const owner = rootFor(filePath)
     if (!owner || seen.has(filePath)) continue
     seen.add(filePath)

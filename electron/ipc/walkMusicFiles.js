@@ -2,6 +2,7 @@ const fsp = require('node:fs/promises')
 const path = require('node:path')
 const { isPreparedStemClipName } = require('../automix/stem-clip')
 const { isPrivatePhoneUploadPath } = require('../phoneUploadPaths')
+const downloadFiles = require('../download/libraryFiles')
 const AUDIO_EXTS = new Set(['.mp3', '.flac', '.m4a', '.ogg', '.wav', '.aac', '.opus', '.wma', '.alac', '.ape'])
 
 // `failures` collects folders that could not be read, so a scan can tell it
@@ -15,7 +16,7 @@ async function walkDir(dir, files = [], failures = null) {
   const visited = new Set()
   while (pending.length) {
     const current = pending.pop()
-    if (isPrivatePhoneUploadPath(current)) continue
+    if (isPrivatePhoneUploadPath(current) || downloadFiles.isHidden(current)) continue
     if (visited.has(current)) continue
     visited.add(current)
     let entries
@@ -29,7 +30,7 @@ async function walkDir(dir, files = [], failures = null) {
     for (const entry of entries) {
       const full = path.join(current, entry.name)
       if (entry.isDirectory()) pending.push(full)
-      else if (entry.isFile() && !isPreparedStemClipName(entry.name) &&
+      else if (entry.isFile() && !downloadFiles.isHidden(full) && !isPreparedStemClipName(entry.name) &&
           AUDIO_EXTS.has(path.extname(entry.name).toLowerCase())) files.push(full)
     }
   }

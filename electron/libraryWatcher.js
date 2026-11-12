@@ -166,9 +166,9 @@ async function scan(folder) {
   if (!selectedRoot(target) || !await isReadableRoot(target)) return false
   const { verifiedPruneExists } = require('./ipc/networkLibrary')
   const verifiedExists = await verifiedPruneExists(
-    target, files, before.map(row => row.file_path))
+    target, inventory, before.map(row => row.file_path))
   if (!verifiedExists || !selectedRoot(target)) return false
-  const pruned = require('./libraryPrune').pruneMissingTracks(db, target, files, {
+  const pruned = require('./libraryPrune').pruneMissingTracks(db, target, inventory, {
     exists: verifiedExists,
   })
   const after = db.prepare("SELECT id, file_path, last_modified FROM tracks WHERE file_path NOT LIKE 'ghost://%'").all()

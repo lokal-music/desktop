@@ -130,7 +130,20 @@ function convertArgs(src, dest, lossless) {
  * A downloaded file Chromium can't play becomes one it can, next to it.
  * @returns the new path, or the original when nothing needed doing (or it failed).
  */
-async function makePlayable(filePath, { ffmpeg } = {}) {
+async function validateAudio(filePath, { ffmpeg } = {}) {
+  const meta = await metadata()?.parseFile(filePath, { duration: true, skipCovers: true })
+  if (!meta?.format?.codec || !(meta.format.duration > 0) || !(meta.format.numberOfChannels > 0)) {
+    throw new Error('The download does not contain readable audio')
+  }
+  // Parsing tags alone accepts truncated streams and HTML disguised as audio.
+  // Decode the audio before publishing it, without touching tags or artwork.
+  const executable = resolveFfmpeg(ffmpeg)
+  if (executable) await run(executable, ['-hide_banner', '-nostdin', '-v', 'error', '-xerror', '-i', filePath, '-map', '0:a:0', '-f', 'null', '-'])
+  return meta
+}
+
+async function makePlayable(filePath, { ffmpeg, strict = false } = {}) {
+  if (strict) await validateAudio(filePath, { ffmpeg })
   const info = await probe(filePath)
   if (!info?.unplayable) return filePath
   const ext = info.lossless ? '.flac' : '.m4a'
@@ -155,16 +168,20 @@ async function makePlayable(filePath, { ffmpeg } = {}) {
     }
   }
   try {
+    const executable = strict ? resolveFfmpeg(ffmpeg) : ffmpeg
+    if (strict && !executable) throw new Error('FFmpeg is required to convert this audio format. Install it in Settings → External Tools.')
     dest = claimDestination(dest)
     claimedDest = true
     temp = `${dest}.part${ext}`
-    await run(ffmpeg, convertArgs(filePath, temp, info.lossless))
+    await run(executable, convertArgs(filePath, temp, info.lossless))
+    if (strict) await validateAudio(temp, { ffmpeg })
     fs.renameSync(temp, dest)
     fs.unlinkSync(filePath)
     return dest
-  } catch {
+  } catch (error) {
     if (temp) { try { fs.unlinkSync(temp) } catch {} }
     if (claimedDest) { try { fs.unlinkSync(dest) } catch {} }
+    if (strict) throw new Error(`Could not make the downloaded audio playable: ${error.message}`)
     return filePath
   }
 }
@@ -225,4 +242,4 @@ async function playableCopy(filePath, { ffmpeg, cacheDir } = {}) {
   inFlight.set(dest, job)
   return job
 }
-module.exports = { probe, classifyCodec, makePlayable, playableCopy, convertArgs, playbackCopyPlan, playbackCopyFailure, resolveFfmpeg }
+module.exports = { probe, classifyCodec, makePlayable, validateAudio, playableCopy, convertArgs, playbackCopyPlan, playbackCopyFailure, resolveFfmpeg }
