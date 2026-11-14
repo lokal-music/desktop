@@ -564,6 +564,7 @@ function createWindow() {
 app.name = 'Lokal'
 app.whenReady().then(async () => {
   if (!gotTheLock) return;
+  const startupStarted = Date.now()
   try { require('../server/index.js') } catch (e) { console.error('Server already running or port blocked:', e.message) }
   app.name = 'Lokal'
   if (app.isPackaged) {
@@ -607,7 +608,12 @@ app.whenReady().then(async () => {
     registerToolsHandlers, registerPlaylistHandlers, registerMixesHandlers, registerPluginHandlers, registerRecapHandlers,
     registerQualityHandlers, registerLibraryKeysHandlers, registerRadioHandlers
   ]) {
+    const started = Date.now()
     try { fn(ipcMain) } catch (e) { console.error(fn.name + ':', e.message) }
+    finally {
+      const duration = Date.now() - started
+      if (duration >= 250) console.warn(`[startup] ${fn.name} blocked initialization for ${duration}ms`)
+    }
   }
   try { registerNetworkLibraryHandlers(ipcMain) }
   catch (e) { console.error('registerNetworkLibraryHandlers:', e.message) }
@@ -945,6 +951,7 @@ ipcMain.handle('window:refreshHitRegions', () => {
 })
 
 createWindow()
+console.log(`[startup] Window created ${Date.now() - startupStarted}ms after Electron ready`)
 
 const bootProtocolUrl = process.argv.find(arg => typeof arg === 'string' && arg.startsWith(`${APP_PROTOCOL}://`))
 const bootToken = extractLastfmAuthToken(bootProtocolUrl || '')
