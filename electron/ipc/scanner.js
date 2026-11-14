@@ -475,6 +475,7 @@ async function scanFolder(folderPath, {
     INSERT INTO tracks
     (id, file_path, file_hash, title, artist, album, album_artist, track_num, year, genre, duration, artwork_path, bitrate, last_modified, replaygain)
     VALUES (@id, @file_path, @file_hash, @title, @artist, @album, @album_artist, @track_num, @year, @genre, @duration, @artwork_path, @bitrate, @last_modified, @replaygain)
+    ON CONFLICT(file_path) DO NOTHING
   `)
   const updateTrackByPath = db.prepare(`
     UPDATE tracks
@@ -486,13 +487,22 @@ async function scanFolder(folderPath, {
     for (const item of items) {
       if (downloadFiles.isHidden(item.file_path)) continue
       const existing = findExistingTrackByPath.get(item.file_path)
-      const trackId = existing?.id || item.id
+      let trackId = existing?.id || item.id
       item.id = trackId
-      const params = trackParams(item, trackId)
+      let params = trackParams(item, trackId)
       if (existing) {
         updateTrackByPath.run(params)
       } else {
-        insertTrack.run(params)
+        const inserted = insertTrack.run(params)
+        if (!inserted.changes) {
+          const collision = db.prepare('SELECT id FROM tracks WHERE file_path = ?').get(item.file_path)
+          if (!collision) throw new Error(`Could not reconcile track path after insert conflict: ${item.file_path}`)
+          trackId = collision.id
+          item.id = trackId
+          item.isNew = false
+          params = trackParams(item, trackId)
+          updateTrackByPath.run(params)
+        }
       }
       addedDate.applyToRow(db, trackId, item.added)
       if (item.quality) quality.saveFields(db, trackId, item.quality, { fileChanged: true })

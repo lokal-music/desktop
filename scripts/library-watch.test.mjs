@@ -73,6 +73,16 @@ test('a scan reads only new and changed files; a changed file keeps its library 
   assert.deepEqual(reads, [])
 })
 
+test('Windows path lookup matches an existing non-ASCII path', async t => {
+  const { db, music, write, row } = fixture(t)
+  const watcher = require('../electron/libraryWatcher')
+  t.mock.method(watcher, 'watchLibraryRoots', () => {})
+  const file = write('Ä.mp3')
+  await scanFolder(music)
+
+  const libraryPaths = require('../electron/libraryPathIdentity')
+  assert.equal(libraryPaths.findByPath(db, file)?.id, row(file).id)
+})
 test('a file Lokal wrote into itself is not read again', async t => {
   const { db, reads, write, row } = fixture(t)
   const a = write('a.mp3')
@@ -118,6 +128,28 @@ test('watched changes: retagged files are read again, deleted ones leave, rename
   assert.equal(changes.added.length, 1)
   assert.deepEqual(changes.removed, [ids.b])
   assert.equal(db.prepare('SELECT track_id FROM user_likes').get().track_id, changes.added[0])
+})
+
+test('a path occupied before batch insert is reconciled instead of aborting the scan', async t => {
+  const { db, music, tags, write, row } = fixture(t)
+  const watcher = require('../electron/libraryWatcher')
+  t.mock.method(watcher, 'watchLibraryRoots', () => {})
+  const file = write('a.mp3')
+  await scanFolder(music)
+  const originalId = row(file).id
+
+  tags['a.mp3'] = { title: 'Retagged song' }
+  write('a.mp3', 'retagged')
+  const newFile = write('b.mp3')
+  const libraryPaths = require('../electron/libraryPathIdentity')
+  t.mock.method(libraryPaths, 'findByPath', () => null)
+
+  const changes = await applyFileChanges([{ path: file }, { path: newFile }])
+  assert.equal(changes.added.length, 1)
+  assert.deepEqual(changes.updated, [originalId])
+  assert.equal(row(file).id, originalId)
+  assert.equal(row(file).title, 'Retagged song')
+  assert.ok(row(newFile), 'a path collision must not roll back other new tracks in the batch')
 })
 
 test('a folder moved into the music folder is read; one moved out leaves', async t => {

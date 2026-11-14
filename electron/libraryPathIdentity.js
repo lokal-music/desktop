@@ -3,7 +3,11 @@ const fs = require('fs')
 const expression = process.platform === 'win32' ? "LOWER(REPLACE(file_path, char(92), '/'))" : 'file_path'
 function pathKey(file) {
   const resolved = path.resolve(file)
-  return process.platform === 'win32' ? resolved.replace(/\\/g, '/').toLowerCase() : resolved
+  // SQLite's built-in LOWER() only folds ASCII, so keep the lookup key in
+  // sync instead of lowercasing non-ASCII path characters in JavaScript.
+  return process.platform === 'win32'
+    ? resolved.replace(/\\/g, '/').replace(/[A-Z]/g, character => character.toLowerCase())
+    : resolved
 }
 function findByPath(db, file) {
   // The overwhelmingly common case is an exact stored path. SQLite's unique
