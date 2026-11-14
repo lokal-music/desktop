@@ -6,6 +6,13 @@ function pathKey(file) {
   return process.platform === 'win32' ? resolved.replace(/\\/g, '/').toLowerCase() : resolved
 }
 function findByPath(db, file) {
+  // The overwhelmingly common case is an exact stored path. SQLite's unique
+  // index handles it without probing the filesystem (which can hang when a
+  // previously indexed NAS path is offline). It also prevents an unnecessary
+  // INSERT that would violate tracks.file_path if the stat-based alias check
+  // cannot access the file.
+  const exact = db.prepare('SELECT * FROM tracks WHERE file_path = ?').get(file)
+  if (exact) return exact
   return db.prepare(`SELECT * FROM tracks WHERE ${expression} = ? ORDER BY (download_source IS NOT NULL) DESC`).all(pathKey(file))
     .find(row => sameFile(row.file_path, file))
 }
