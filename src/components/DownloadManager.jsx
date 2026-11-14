@@ -672,15 +672,18 @@ export function DownloadManagerPanel() {
           style={{ top: anchor.top, left: anchor.left, width: anchor.width, maxHeight: `min(440px, calc(100vh - ${anchor.top + 12}px))`, transformOrigin: anchor.origin, backgroundColor: 'rgba(var(--surface-rgb), 0.97)' }}
           className="fixed z-[80] flex flex-col overflow-hidden rounded-2xl border border-border shadow-[0_24px_60px_rgba(0,0,0,0.45)] backdrop-blur-xl"
         >
-          <div className="flex items-center gap-2 border-b border-border px-3 py-2.5">
-            <div role="tablist" aria-label={t("Downloads")} className="flex min-w-0 flex-1 items-center gap-1">
+          {/* Tabs and queue actions need separate rows: their combined min-content
+              width exceeds the 380px popover (especially with translations or
+              display scaling), otherwise Addons / Cancel all / Clear overlap. */}
+          <div data-download-panel-header className="flex min-w-0 flex-col gap-2 border-b border-border px-3 py-2.5">
+            <div role="tablist" aria-label={t("Downloads")} className="flex w-full min-w-0 items-center gap-1 overflow-x-auto">
               {[
                 ['queue', 'Queue', active.length],
                 ['others', 'Others', othersRunning],
                 ['addons', 'Addons', addonsLoaded ? addonWarnings.length : 0],
               ].map(([id, label, count]) => (
                 <button key={id} role="tab" aria-selected={tab === id} onClick={() => setTab(id)}
-                  className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-1 text-[11px] font-display uppercase tracking-[0.16em] transition-colors ${tab === id ? 'bg-accent/15 text-accent' : 'text-muted hover:text-white'}`}>
+                  className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-1 text-[11px] font-display uppercase tracking-[0.16em] transition-colors ${tab === id ? 'bg-accent/15 text-accent' : 'text-muted hover:text-white'}`}>
                   {t(label)}
                   {count > 0 && (
                     <span className={`rounded-full px-1.5 text-[10px] tracking-normal tabular-nums ${id === 'addons' ? 'bg-yellow-500/20 text-yellow-200' : 'bg-accent/20 text-accent'}`}>{count}</span>
@@ -688,11 +691,15 @@ export function DownloadManagerPanel() {
                 </button>
               ))}
             </div>
-            {tab === 'queue' && active.length > 0 && (
-              <button onClick={cancelAll} className="whitespace-nowrap text-[11px] uppercase tracking-[0.14em] text-muted transition-colors hover:text-white">{t("Cancel all")}</button>
-            )}
-            {tab === 'queue' && finished.length > 0 && (
-              <button onClick={clearFinished} className="flex flex-shrink-0 items-center gap-1 text-[11px] uppercase tracking-[0.14em] text-muted transition-colors hover:text-white"><Trash2 size={11} />{t("Clear")}</button>
+            {tab === 'queue' && (active.length > 0 || finished.length > 0) && (
+              <div data-download-panel-actions className="flex w-full flex-wrap items-center justify-end gap-x-4 gap-y-1">
+                {active.length > 0 && (
+                  <button onClick={cancelAll} className="shrink-0 whitespace-nowrap text-[11px] uppercase tracking-[0.14em] text-muted transition-colors hover:text-white">{t("Cancel all")}</button>
+                )}
+                {finished.length > 0 && (
+                  <button onClick={clearFinished} className="flex shrink-0 items-center gap-1 whitespace-nowrap text-[11px] uppercase tracking-[0.14em] text-muted transition-colors hover:text-white"><Trash2 size={11} />{t("Clear")}</button>
+                )}
+              </div>
             )}
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto p-2">
