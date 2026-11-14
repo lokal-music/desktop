@@ -306,15 +306,51 @@ class DownloadManager {
       }
       this.jobs.set(job.id, job)
     }
-    try {
-      if (require('../libraryPathIdentity').repairSameFileRows(this.db())) this.deps.onLibraryUpdated?.({ repaired: true })
-    } catch (error) { console.warn('[downloads] Same-file repair:', error.message) }
-    this.repairMovedDownloads().catch(error => console.warn('[downloads] Moved-file repair:', error.message))
+    // Reconciliation can scan the entire music library and stat files on a
+    // disconnected drive. Never do that synchronously during Electron boot:
+    // it used to delay createWindow(), leaving a black screen for seconds.
     this.trimHistory()
     this.repairGhostIndexed()
+    setTimeout(() => {
+      this.repairStartupLibraryInBackground()
+        .catch(error => console.warn('[downloads] Startup library repair:', error.message))
+    }, 4000).unref?.()
     if (resumed) setTimeout(() => this.pump(), 4000)
     setTimeout(() => this.backfillSources(), 7000)
     setTimeout(() => this.indexLeftovers(), 6000)
+  }
+
+  /** Run the legacy same-file repair in a separate thread, not the UI thread. */
+  repairSameFileRowsInWorker() {
+    return new Promise(resolve => {
+      let worker
+      try {
+        const { Worker } = require('node:worker_threads')
+        worker = new Worker(path.join(__dirname, 'libraryRepairWorker.js'), {
+          workerData: { databasePath: path.join(this.deps.getStorageDir(), 'lokal.db') },
+        })
+      } catch (error) {
+        console.warn('[downloads] Could not start same-file repair worker:', error.message)
+        return resolve()
+      }
+      let result
+      worker.once('message', message => { result = message })
+      worker.once('error', error => console.warn('[downloads] Same-file repair worker:', error.message))
+      worker.once('exit', code => {
+        if (code !== 0) console.warn('[downloads] Same-file repair worker exited:', code)
+        else if (result?.error) console.warn('[downloads] Same-file repair:', result.error)
+        else if (result?.repaired) {
+          console.log(`[downloads] Repaired ${result.repaired} same-file library row(s)`)
+          try { this.deps.onLibraryUpdated?.({ repaired: true }) } catch {}
+        }
+        resolve()
+      })
+    })
+  }
+
+  async repairStartupLibraryInBackground() {
+    await this.repairSameFileRowsInWorker()
+    await this.repairMovedDownloads()
   }
 
   /** The library track downloaded from the online song `ref`, or null. */
@@ -329,6 +365,9 @@ class DownloadManager {
     const db = this.db()
     const { mergeDuplicates } = require('../ipc/mergeDuplicates')
     for (const job of [...this.jobs.values()]) {
+      // Release the Electron event loop between jobs, especially when the
+      // saved queue includes many paths on slow or disconnected drives.
+      await new Promise(resolve => setImmediate(resolve))
       if (ACTIVE.has(job.status) || job.pendingIndex?.length) continue
       if (job.kind !== 'single' && job.kind !== 'soulseek') continue
       const ids = [...new Set((job.indexedTracks || []).map(track => track.id))]
