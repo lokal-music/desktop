@@ -12,6 +12,7 @@ import ArtistRefreshAllModal from '../components/ArtistRefreshAllModal'
 import ContextMenu, { useContextMenu } from '../components/ContextMenu'
 import { openRadio } from '../radioActions'
 import { showToast } from '../components/Toaster'
+import { artistPath } from '../releaseActions'
 import { discoveryArtistKey, loadDiscoveryArtists, setArtistFollowed, useDiscoveryArtists } from '../discoveryArtists'
 import { useTranslation } from '../i18n'
 
@@ -82,8 +83,8 @@ function ArtistCard({ artist, onClick, onPlay, onContextMenu, rank, animateIn = 
         ) : (
           <FallbackAvatar name={artist.name} />
         )}
-        {/* Same play glyph as the album covers; the rest of the card opens the artist. */}
-        <div className="absolute inset-0 flex items-center justify-center bg-black/45 opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-focus-visible:opacity-100 group-has-[:focus-visible]:opacity-100">
+        {/* Online-only follows have no indexed recordings to play here. */}
+        {!artist.onlineFollowed && <div className="absolute inset-0 flex items-center justify-center bg-black/45 opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-focus-visible:opacity-100 group-has-[:focus-visible]:opacity-100">
           <button
             type="button"
             aria-label={`Play ${artist.name}`}
@@ -93,11 +94,11 @@ function ArtistCard({ artist, onClick, onPlay, onContextMenu, rank, animateIn = 
           >
             <PlayGlyph className="h-11 w-11 drop-shadow-[0_4px_14px_rgba(0,0,0,0.6)]" />
           </button>
-        </div>
+        </div>}
       </div>
       <div className="min-w-0 w-full">
         <p className="truncate text-sm font-medium text-white">{artist.name}</p>
-        <p className="truncate text-xs text-white/55">{t(artist.track_count === 1 ? '{count} track' : '{count} tracks', { count: artist.track_count })}</p>
+        <p className="truncate text-xs text-white/55">{artist.onlineFollowed ? t('Followed online') : t(artist.track_count === 1 ? '{count} track' : '{count} tracks', { count: artist.track_count })}</p>
       </div>
     </motion.div>
   )
@@ -122,9 +123,9 @@ function ArtistRow({ artist, onClick, onPlay, onContextMenu }) {
       </div>
       <div className="min-w-0">
         <p className="break-words text-sm font-medium leading-snug text-text" title={artist.name}>{artist.name}</p>
-        <p className="text-xs text-muted">{artist.track_count} {artist.track_count === 1 ? 'track' : 'tracks'}</p>
+        <p className="text-xs text-muted">{artist.onlineFollowed ? 'Followed online' : `${artist.track_count} ${artist.track_count === 1 ? 'track' : 'tracks'}`}</p>
       </div>
-      <button
+      {!artist.onlineFollowed && <button
         type="button"
         onClick={(event) => { event.stopPropagation(); onPlay?.() }}
         title={`Play ${artist.name}`}
@@ -132,7 +133,7 @@ function ArtistRow({ artist, onClick, onPlay, onContextMenu }) {
         className="flex h-8 w-8 items-center justify-center rounded-full bg-accent text-[rgb(var(--bg-rgb))] opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100"
       >
         <Play size={13} fill="currentColor" className="translate-x-px" />
-      </button>
+      </button>}
     </div>
   )
 }
@@ -243,6 +244,19 @@ export default function Artists() {
   }, [query, sort, followedOnly, mainOnly])
   // Following or unfollowing someone changes the Followed list.
   const followed = useDiscoveryArtists(state => state.followed)
+  // Scanner API pages contain only artists with downloaded tracks. Catalogue
+  // follows must also appear in the Artists collection, even with zero tracks.
+  const onlineFollowArtists = useMemo(() => {
+    const localKeys = new Set(artists.map(artist => discoveryArtistKey(artist.name)))
+    const needle = query.trim().toLowerCase()
+    return [...followed.values()]
+      .filter(name => !localKeys.has(discoveryArtistKey(name)) && (!needle || name.toLowerCase().includes(needle)))
+      .map(name => ({ id: `online:${discoveryArtistKey(name)}`, name, onlineFollowed: true, track_count: 0 }))
+      .sort((a, b) => a.name.localeCompare(b.name))
+  }, [artists, followed, query])
+  const openArtist = artist => artist.onlineFollowed
+    ? navigate(artistPath(artist.name), { state: { name: artist.name } })
+    : navigate(`/artist/${artist.id}`)
   useEffect(() => { loadDiscoveryArtists().catch(() => {}) }, [])
   const followedSeen = useRef(followed)
   useEffect(() => {
@@ -326,6 +340,7 @@ export default function Artists() {
   }, [artists, density, sort])
 
   const playArtist = async (artist) => {
+    if (artist.onlineFollowed) { openArtist(artist); return }
     const data = await api.getArtist(artist.id)
     const tracks = Array.isArray(data?.tracks) && data.tracks.length ? data.tracks : (Array.isArray(data?.topTracks) ? data.topTracks : [])
     if (tracks.length) playQueue(tracks, 0)
@@ -335,7 +350,7 @@ export default function Artists() {
     const isFollowed = followed.has(discoveryArtistKey(artist.name))
     menu.open(event, [
       { label: 'Start artist radio', icon: Radio, onSelect: () => openRadio(navigate, { artist: artist.name, type: 'artist' }, user?.id) },
-      { label: 'Open artist', icon: Users, onSelect: () => navigate(`/artist/${artist.id}`) },
+      { label: 'Open artist', icon: Users, onSelect: () => openArtist(artist) },
       { separator: true },
       { label: isFollowed ? 'Unfollow artist' : 'Follow artist', icon: isFollowed ? UserMinus : UserPlus, onSelect: () => setArtistFollowed(artist.name, !isFollowed).then(() => showToast(isFollowed ? `Unfollowed ${artist.name}` : `Following ${artist.name}`)).catch(error => showToast(error.message)) },
     ])
@@ -457,6 +472,18 @@ export default function Artists() {
           </section>
         )}
 
+        {onlineFollowArtists.length > 0 && (
+          <section className="space-y-4">
+            <h2 className="text-xs font-display text-muted uppercase tracking-widest">{t('Followed online')}</h2>
+            <div className={gridClass}>
+              {onlineFollowArtists.map(item => (
+                <ArtistCard key={item.id} artist={item} animateIn={false}
+                  onClick={() => openArtist(item)}
+                  onContextMenu={openArtistMenu} />
+              ))}
+            </div>
+          </section>
+        )}
         <section className="space-y-4">
           {!query.trim() && !followedOnly && topArtists.length > 0 && density !== 'list' && (
             <h2 className="text-xs font-display text-muted uppercase tracking-widest">{t("All Artists")}</h2>
@@ -465,7 +492,7 @@ export default function Artists() {
             <div className="flex items-center justify-center py-24">
               <Loader2 size={28} className="animate-spin text-muted" />
             </div>
-          ) : artists.length === 0 ? (
+          ) : artists.length === 0 && onlineFollowArtists.length === 0 ? (
             <div className="py-24 text-center">
               <Users size={42} className="mx-auto mb-4 text-muted/30" />
               <p className="text-sm text-muted">{emptyMessage}</p>
