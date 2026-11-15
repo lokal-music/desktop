@@ -165,6 +165,22 @@ export default function Artists() {
   // (count included) while it refreshes, instead of "Loading artists...".
   const cached = peekCache(listKey(sort, followedOnly, mainOnly))
   const [artists, setArtists] = useState(() => cached?.items || [])
+  const [localArtistNames, setLocalArtistNames] = useState(null)
+  useEffect(() => {
+    let active = true
+    const refresh = () => {
+      // The paged grid is only a subset of the downloaded library. Without
+      // checking all local names, other pages would appear as online ghosts.
+      api.getArtists().then(rows => {
+        if (active && Array.isArray(rows)) {
+          setLocalArtistNames(new Set(rows.map(row => discoveryArtistKey(row.name))))
+        }
+      }).catch(() => {})
+    }
+    refresh()
+    window.addEventListener('lokal:refresh', refresh)
+    return () => { active = false; window.removeEventListener('lokal:refresh', refresh) }
+  }, [])
   const [topArtists, setTopArtists] = useState(() => peekCache(`artists:top${mainOnly ? ':main-only' : ''}`) || [])
   const [total, setTotal] = useState(() => cached?.total || 0)
   const [hasMore, setHasMore] = useState(() => !!cached?.hasMore)
@@ -247,13 +263,14 @@ export default function Artists() {
   // Scanner API pages contain only artists with downloaded tracks. Catalogue
   // follows must also appear in the Artists collection, even with zero tracks.
   const onlineFollowArtists = useMemo(() => {
-    const localKeys = new Set(artists.map(artist => discoveryArtistKey(artist.name)))
+    if (!localArtistNames) return []
+    const localKeys = new Set([...localArtistNames, ...artists.map(artist => discoveryArtistKey(artist.name))])
     const needle = query.trim().toLowerCase()
     return [...followed.values()]
       .filter(name => !localKeys.has(discoveryArtistKey(name)) && (!needle || name.toLowerCase().includes(needle)))
       .map(name => ({ id: `online:${discoveryArtistKey(name)}`, name, onlineFollowed: true, track_count: 0 }))
       .sort((a, b) => a.name.localeCompare(b.name))
-  }, [artists, followed, query])
+  }, [artists, followed, localArtistNames, query])
   const openArtist = artist => artist.onlineFollowed
     ? navigate(artistPath(artist.name), { state: { name: artist.name } })
     : navigate(`/artist/${artist.id}`)
