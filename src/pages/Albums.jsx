@@ -24,6 +24,9 @@ import { startReleaseRefresh, useReleaseRefresh } from '../store/releaseRefresh'
 import { albumCacheKey, isConnected, loadOnlineAlbumCached, mergeWithLibrary, onlineAlbumPath, peekOnline, setConnected } from '../onlineBrowse'
 import { downloadOnline, playOnline, queueOnline } from '../onlineActions'
 import { losslessMenuItem, losslessManyMenuItem } from '../quality'
+import { loadSavedOnlineAlbums, onlineReleaseKey, setOnlineAlbumSaved, useSavedOnlineAlbums } from '../onlineLibrary'
+import { showToast } from '../components/Toaster'
+import ContextMenu, { useContextMenu } from '../components/ContextMenu'
 import { useTranslation } from '../i18n'
 
 const shuffledList = list => {
@@ -36,11 +39,11 @@ const shuffledList = list => {
 }
 
 function getAlbumArtwork(album) {
-  return api.albumArtURL(album)
+  return album?.savedOnline ? album.artwork_url : api.albumArtURL(album)
 }
 
 function getAlbumFullArtwork(album) {
-  return api.albumFullArtURL(album) || getAlbumArtwork(album)
+  return album?.savedOnline ? album.artwork_url : (api.albumFullArtURL(album) || getAlbumArtwork(album))
 }
 
 function releaseLabel(type) {
@@ -146,7 +149,7 @@ function AlbumCard({ album, onClick, onPlay, onContextMenu, selected = false }) 
           <p className="truncate text-sm font-medium text-white decoration-white/60 underline-offset-2 group-hover/open:underline">{album.title}</p>
           <p className="truncate text-xs text-muted">{album.artists || album.album_artist || 'Unknown Artist'}</p>
           <p className="text-[11px] uppercase leading-snug tracking-[0.16em] text-muted/70">
-            {t(releaseLabel(album.release_type))} • {t((Number(album.track_count) || 0) === 1 ? '{count} track' : '{count} tracks', { count: Number(album.track_count) || 0 })}{album.year ? ` • ${album.year}` : ''}
+            {album.savedOnline ? t('Saved online') : t(releaseLabel(album.release_type))} • {t((Number(album.track_count) || 0) === 1 ? '{count} track' : '{count} tracks', { count: Number(album.track_count) || 0 })}{album.year ? ` • ${album.year}` : ''}
           </p>
         </div>
       </button>
@@ -159,6 +162,9 @@ export default function Albums() {
   // Last visit's releases (and the settings already read) paint at once on
   // the way back, instead of "Loading releases..." first; they refresh quietly.
   const [albums, setAlbumsState] = useState(() => peekCache('albums:all') || [])
+  const savedOnline = useSavedOnlineAlbums(state => state.saved)
+  const onlineMenu = useContextMenu()
+  useEffect(() => { loadSavedOnlineAlbums().catch(() => {}) }, [])
   const setAlbums = (list) => { writeCache('albums:all', list); setAlbumsState(list) }
   const [selectedAlbum, setSelectedAlbum] = useState(null)
   const [albumTracks, setAlbumTracks] = useState([])
@@ -306,9 +312,20 @@ export default function Albums() {
   // Settings; one that hid Singles is carried over).
   const [shownTypes, toggleType] = useAlbumsPageReleaseTypes({ hideSingles: settings.show_singles_in_albums === '0' })
 
+  const visibleLibrary = useMemo(() => {
+    const localKeys = new Set(albums.map(onlineReleaseKey))
+    const remote = [...savedOnline.values()]
+      .filter(item => !localKeys.has(onlineReleaseKey(item)))
+      .map(item => ({
+        ...item, album_artist: item.artist, artists: item.artist,
+        savedOnline: true, artwork_url: item.artwork_url,
+      }))
+    return [...albums, ...remote]
+  }, [albums, savedOnline])
+
   const filteredAlbums = useMemo(() => {
     const lower = query.trim().toLowerCase()
-    const base = albums.filter((album) => {
+    const base = visibleLibrary.filter((album) => {
       if (!lower) return true
       const title = String(album.title || '').toLowerCase()
       const artists = String(album.artists || album.album_artist || '').toLowerCase()
@@ -337,7 +354,7 @@ export default function Albums() {
     }
 
     return base
-  }, [albums, query, settings.album_sort_mode])
+  }, [visibleLibrary, query, settings.album_sort_mode])
 
   const releaseTypes = useMemo(() => releaseTypeCounts(filteredAlbums), [filteredAlbums])
   const groupedAlbums = useMemo(() => groupReleases(filteredAlbums, shownTypes).map(group => ({ key: group.type, label: group.label, items: group.items })), [filteredAlbums, shownTypes])
@@ -387,11 +404,18 @@ export default function Albums() {
   })
   const { menu } = releases
   const shownAlbums = useMemo(() => groupedAlbums.flatMap(group => group.items), [groupedAlbums])
-  const shownKeys = useMemo(() => shownAlbums.map(releaseKey), [shownAlbums])
+  const shownKeys = useMemo(() => shownAlbums.filter(album => !album.savedOnline).map(releaseKey), [shownAlbums])
   const releasesFor = (keys) => shownAlbums.filter(album => keys.includes(releaseKey(album)))
   const releaseSelection = useSelection(shownKeys, { onDelete: (keys) => releases.askDelete(releasesFor(keys)) })
   const selectedReleases = () => releasesFor([...releaseSelection.selected])
-  const openReleaseMenu = (event, album) => releases.openMenu(event, releasesFor(releaseSelection.contextSelect(releaseKey(album))))
+  const openReleaseMenu = (event, album) => {
+    if (!album.savedOnline) return releases.openMenu(event, releasesFor(releaseSelection.contextSelect(releaseKey(album))))
+    onlineMenu.open(event, [
+      { label: 'Open album', icon: Disc3, onSelect: () => openSavedAlbum(album) },
+      { separator: true },
+      { label: 'Remove from Albums', icon: Trash2, onSelect: () => setOnlineAlbumSaved(album, false).catch(error => showToast(error.message)) },
+    ])
+  }
 
   // Songs on the album page: double click (or the number's button) plays.
   const albumTrackIds = useMemo(() => albumTracks.map(track => track.id), [albumTracks])
@@ -414,7 +438,17 @@ export default function Albums() {
     ])
   }
 
+  const openSavedAlbum = album => navigate(onlineAlbumPath({ artist: album.artist, album: album.title, albumId: album.albumId, provider: album.provider, sourceAlbumId: album.sourceAlbumId }), { state: { artwork: album.artwork_url } })
+
   const playAlbumRelease = async (album) => {
+    if (album.savedOnline) {
+      try {
+        const result = await loadOnlineAlbumCached({ artist: album.artist, album: album.title, albumId: album.albumId, artwork: album.artwork_url, provider: album.provider, sourceAlbumId: album.sourceAlbumId })
+        if (result.tracks?.length) playOnline(result.tracks, { selected: result.tracks[0], name: album.title, path: onlineAlbumPath({ artist: album.artist, album: album.title, albumId: album.albumId, provider: album.provider, sourceAlbumId: album.sourceAlbumId }) })
+        else showToast(result.error || 'Could not find tracks for this online album.')
+      } catch (error) { showToast(error.message || 'Could not play online album.') }
+      return
+    }
     const tracks = await api.getAlbumTracks(album)
     if (Array.isArray(tracks) && tracks.length) {
       playQueue(tracks, 0, makeAlbumContext(album))
@@ -631,10 +665,12 @@ export default function Albums() {
                       selected={releaseSelection.has(releaseKey(album))}
                       // Ctrl/Cmd or Shift + click selects instead of opening or playing.
                       onClick={(event) => {
-                        if (!releaseSelection.click(releaseKey(album), event)) navigate('/albums', { state: { album } })
+                        if (album.savedOnline) openSavedAlbum(album)
+                        else if (!releaseSelection.click(releaseKey(album), event)) navigate('/albums', { state: { album } })
                       }}
                       onPlay={(event) => {
-                        if (!releaseSelection.click(releaseKey(album), event)) playAlbumRelease(album)
+                        if (album.savedOnline) playAlbumRelease(album)
+                        else if (!releaseSelection.click(releaseKey(album), event)) playAlbumRelease(album)
                       }}
                       onContextMenu={(event) => openReleaseMenu(event, album)}
                     />
@@ -646,6 +682,7 @@ export default function Albums() {
         )}
       </div>
       {releases.elements}
+      <ContextMenu menu={onlineMenu} />
     </div>
   )
 }
