@@ -24,7 +24,7 @@
     "test:equalizer": "node --test scripts/equalizer-port.test.mjs",
     "test:search-scope": "node --test scripts/search-source-scope.test.mjs",
     "test:home-cover-flow": "node --test scripts/cover-flow.test.mjs scripts/home-cover-choice.test.mjs",
-    "test:motion-covers": "node --test scripts/motion-cover-resolution.test.mjs",
+    "test:motion-covers": "node --test scripts/motion-cover-resolution.test.mjs scripts/motion-cover-offline.test.mjs",
     "test:artwork-download": "node --test scripts/artwork-download.test.mjs",
     "test:artist-roles": "node --test scripts/artist-roles.test.mjs",
     "test:artist-visuals": "node --test scripts/artist-visuals.test.mjs scripts/artist-media-file-url.test.mjs",
