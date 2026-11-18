@@ -160,6 +160,9 @@ test('an evicted, empty or partial clip is never presented as a valid offline co
   assert.equal(result, null)
   assert.ok(requests() > 0, 'missing local media falls through to normal provider resolution')
 
+  // Simulate a separate historical lookup still pointing to a damaged file.
+  // The unsuccessful online refresh above may have replaced its own row.
+  index('apple,tidal,community|v3', apple)
   const corrupted = clip(apple, { bytes: 32 })
   const previousRequests = requests()
   const result2 = await motionCoverFor(db, track, { cacheDir })
