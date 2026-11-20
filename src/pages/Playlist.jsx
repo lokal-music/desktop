@@ -35,6 +35,7 @@ export default function Playlist() {
   const downloadingRef = useRef(false)
   const [downloading, setDownloading] = useState(false)
   const [exportingPlaylist, setExportingPlaylist] = useState(false)
+  const [coverRevision, setCoverRevision] = useState(0)
   const { id } = useParams()
   const nav = useNavigate()
   const { user } = useAppStore()
@@ -305,6 +306,11 @@ export default function Playlist() {
   }
 
   const showExportMenu = event => exportMenu.open(event, [
+    ...(!isLiked && api.isElectron ? [
+      { label: playlist?.cover_path ? 'Change playlist photo' : 'Upload playlist photo', icon: ImageIcon, onSelect: uploadPlaylistPhoto },
+      ...(playlist?.cover_path ? [{ label: 'Reset to automatic cover', icon: RefreshCw, onSelect: clearPlaylistPhoto }] : []),
+      { separator: true },
+    ] : []),
     { label: downloading ? 'Preparing downloads…' : 'Download missing songs', icon: Download, disabled: downloading || !loaded, onSelect: downloadMissing },
     ...(api.isElectron ? [
       { separator: true },
@@ -338,30 +344,49 @@ export default function Playlist() {
 
   const uploadPlaylistPhoto = async () => {
     if (!api.isElectron || isLiked) return
-    const fp = await api.openFile([{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'webp'] }])
-    if (!fp) return
-    const dataUrl = await api.readFileAsDataURL(fp)
-    if (!dataUrl) return
-    const updated = await api.updatePlaylist(id, { coverData: dataUrl })
-    if (updated?.id) setPlaylist(updated)
-    window.dispatchEvent(new CustomEvent('lokal:playlist-updated', { detail: { playlistId: id } }))
+    try {
+      const fp = await api.openFile([{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'webp'] }])
+      if (!fp) return
+      const dataUrl = await api.readFileAsDataURL(fp)
+      if (!dataUrl) throw new Error('Could not read the selected image.')
+      const updated = await api.updatePlaylist(id, { coverData: dataUrl })
+      if (!updated?.id) throw new Error('Could not save the playlist cover.')
+      setPlaylist(updated)
+      setCoverRevision(current => current + 1)
+      window.dispatchEvent(new CustomEvent('lokal:playlist-updated', { detail: { playlistId: id } }))
+    } catch (error) {
+      showToast(error?.message || 'Could not update the playlist cover.')
+    }
   }
 
   const clearPlaylistPhoto = async () => {
     if (isLiked) return
-    const updated = await api.updatePlaylist(id, { clearCover: true })
-    if (updated?.id) setPlaylist(updated)
-    window.dispatchEvent(new CustomEvent('lokal:playlist-updated', { detail: { playlistId: id } }))
+    try {
+      const updated = await api.updatePlaylist(id, { clearCover: true })
+      if (!updated?.id) throw new Error('Could not reset the playlist cover.')
+      setPlaylist(updated)
+      setCoverRevision(current => current + 1)
+      window.dispatchEvent(new CustomEvent('lokal:playlist-updated', { detail: { playlistId: id } }))
+    } catch (error) {
+      showToast(error?.message || 'Could not reset the playlist cover.')
+    }
   }
 
   return (
     <div className="p-6 pb-10">
-      <div className="flex items-end gap-4 mb-4">
-        <div className="relative w-28 h-28 flex-shrink-0 group">
+      <div className="relative flex items-end gap-4 mb-4 overflow-hidden rounded-2xl p-4 min-h-[160px]">
+        {!isLiked && (
+          <div className="absolute inset-0" aria-hidden="true">
+            <PlaylistCover playlistId={id} coverPath={playlist?.cover_path} tracks={tracks}
+              hero revision={coverRevision} />
+          </div>
+        )}
+        <div className="relative z-10 w-28 h-28 flex-shrink-0 group">
           <div className="w-28 h-28 rounded-2xl overflow-hidden bg-elevated border border-border flex items-center justify-center shadow-xl">
             {isLiked
               ? <Heart size={44} className="text-accent" fill="currentColor" />
-              : <PlaylistCover playlistId={id} coverPath={playlist?.cover_path} size={112} className="w-full h-full object-cover" />
+              : <PlaylistCover playlistId={id} coverPath={playlist?.cover_path} size={112}
+                  tracks={tracks} revision={coverRevision} className="w-full h-full object-cover" />
             }
           </div>
           {!isLiked && (
@@ -388,7 +413,7 @@ export default function Playlist() {
           )}
         </div>
 
-        <div className="min-w-0 flex-1">
+        <div className="relative z-10 min-w-0 flex-1">
           <p className="text-xs font-display text-muted uppercase tracking-widest mb-1 flex items-center gap-1.5">
             {smart && <Sparkles size={11} className="text-accent" />}{smart ? t('Smart playlist') : t('Playlist')}
           </p>
