@@ -18,7 +18,7 @@ import { showToast, showLoadingToast } from '../components/Toaster'
 import { addToPlaylistMany, addToQueueMany, playNextMany, saveAsPlaylist } from '../trackActions'
 import { artistPath } from '../releaseActions'
 import ProviderConnections from '../components/ProviderConnections'
-import { libraryDownloadMessage, saveTracksToLibrary, trackArtURL } from '../onlineTracks'
+import { libraryDownloadMessage, saveTracksToLibrary, trackArtURL, trackFullArtURL } from '../onlineTracks'
 import { openRadio } from '../radioActions'
 import { songKey, sourceName, resolveRecommendationTracks, playbackFallbackMessage, dispatchAddonVerificationRequired, isAddonVerificationRequiredError } from '../recommendations'
 import { recommendationSession, rememberHomePath } from '../recommendationSession'
@@ -81,6 +81,23 @@ function dateLabel(timestamp, t) {
   return new Date(value * 1000).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })
 }
 
+function MixArtwork({ track }) {
+  const thumbnail = trackArtURL(track)
+  const full = trackFullArtURL(track) || thumbnail
+  const [failed, setFailed] = useState(false)
+  useEffect(() => setFailed(false), [full, thumbnail])
+
+  return (
+    <>
+      {thumbnail && <QualityImage src={thumbnail} className="absolute inset-0 w-full h-full object-cover" />}
+      {full && full !== thumbnail && !failed && (
+        <QualityImage src={full} className="absolute inset-0 w-full h-full object-cover"
+          onError={() => setFailed(true)} />
+      )}
+    </>
+  )
+}
+
 function MixCard({ mix, onClick, onOpen, onSave, saving, onContextMenu }) {
   const { t } = useTranslation()
   const arts = [...new Map(mix.tracks.map(track => [trackArtURL(track), track]).filter(([art]) => art)).values()].slice(0, 4)
@@ -91,8 +108,8 @@ function MixCard({ mix, onClick, onOpen, onSave, saving, onContextMenu }) {
         className="w-full flex flex-col gap-3 p-3 bg-elevated border border-border rounded-xl hover:border-accent/30 transition-all text-left">
         <div className="w-full aspect-square rounded-lg overflow-hidden bg-card relative">
           {arts.length === 0 && <div className="w-full h-full flex items-center justify-center text-subtle"><Radio size={36} /></div>}
-          {arts.length === 1 && <QualityImage src={trackArtURL(arts[0])} className="w-full h-full object-cover" />}
-          {arts.length > 1 && <div className="w-full h-full grid grid-cols-2">{arts.map((track, index) => <QualityImage key={index} src={trackArtURL(track)} className="w-full h-full object-cover" />)}</div>}
+          {arts.length === 1 && <MixArtwork track={arts[0]} />}
+          {arts.length > 1 && <div className="w-full h-full grid grid-cols-2">{arts.map((track, index) => <div key={index} className="relative min-w-0 min-h-0"><MixArtwork track={track} /></div>)}</div>}
           <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity"><div className="w-10 h-10 bg-accent rounded-full flex items-center justify-center shadow-xl"><Play size={16} fill="currentColor" className="text-base translate-x-0.5" /></div></div>
         </div>
       </motion.button>
