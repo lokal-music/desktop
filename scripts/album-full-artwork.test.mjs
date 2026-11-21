@@ -45,10 +45,10 @@ test('recap surfaces use full-size local art and provider-aware remote images', 
 
 test('Your Mixes cards prefer full-size local artwork and keep the thumbnail as fallback', () => {
   assert.match(home, /trackFullArtURL/)
-  assert.match(home, /function MixArtwork\\(\\{ track \\}\\)/)
-  assert.match(home, /QualityImage src=\\{thumbnail\\}/)
-  assert.match(home, /QualityImage src=\\{full\\}/)
-  assert.match(home, /onError=\\{\\(\\) => setFailed\\(true\\)\\}/)
-  assert.match(home, /MixArtwork track=\\{arts\\[0\\]\\}/)
-  assert.match(home, /MixArtwork track=\\{track\\}/)
+  assert.ok(home.includes('function MixArtwork({ track })'))
+  assert.ok(home.includes('QualityImage src={thumbnail}'))
+  assert.ok(home.includes('QualityImage src={full}'))
+  assert.ok(home.includes('onError={() => setFailed(true)}'))
+  assert.ok(home.includes('MixArtwork track={arts[0]}'))
+  assert.ok(home.includes('MixArtwork track={track}'))
 })
