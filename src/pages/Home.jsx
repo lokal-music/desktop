@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { CalendarDays, ChevronDown, ChevronUp, Clock, Disc3, Download, History, ListEnd, ListMusic, ListPlus, Music, Play, Plus, Radio, RefreshCw, Sparkles, User, UserMinus, UserPlus, Pencil } from 'lucide-react'
+import { CalendarDays, ChevronDown, ChevronUp, Clock, Disc3, Download, History, ListEnd, ListMusic, ListPlus, Music, Play, Plus, Radio, RefreshCw, Sparkles, User, UserMinus, UserPlus, Pencil, Smartphone } from 'lucide-react'
 import { usePlayerStore, useAppStore } from '../store/player'
 import TrackList from '../components/TrackList'
 import PlaylistCollection from '../components/PlaylistCollection'
@@ -36,6 +36,7 @@ import FlowPanel from '../components/FlowPanel'
 import { madeForYou } from '../madeForYou'
 import { personalizedHomeMessages } from '../homeGreeting.mjs'
 import { useAppearanceFlag } from '../appearanceFlags'
+import { connectedPhones, sendTracksToPhone, transferableTracks } from '../sendToMobile.mjs'
 
 const today = () => new Date().toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })
 const mixTitle = (mix) => (mix.type === 'artist' ? `${mix.name} Mix` : mix.name)
@@ -361,6 +362,7 @@ function HomeContent({ user }) {
   const playQueue = usePlayerStore(s => s.playQueue)
   const navigate = useNavigate()
   const menu = useContextMenu()
+  const menuRequestRef = useRef(0)
   const [showDiscoveryEditor, setShowDiscoveryEditor] = useState(false)
   const [shelfLayouts, setShelfLayouts] = useState(() => Object.fromEntries(
     Object.keys(DISCOVERY_SHELF_DEFAULTS).map(provider => {
@@ -694,13 +696,61 @@ function HomeContent({ user }) {
     if (section === 'history') return data?.history || []
     return data?.categories?.find(group => group.id === section)?.tracks || []
   }
-  const openTrackMenu = (event, track, section = 'fresh') => {
-    return menu.open(event, [
+  const sendToPhone = async (device, tracks) => {
+    const tracksToSend = transferableTracks(tracks)
+    if (!tracksToSend.length) return
+    const toast = showLoadingToast(t('Sending {count} songs to {device}…', { count: tracksToSend.length, device: device.name }))
+    try {
+      const result = await sendTracksToPhone(window.electron, device.id, tracksToSend, progress => {
+        toast.update(
+          t('Copying batch {batch} of {batches} ({completed}/{total} songs)…', progress),
+          progress.completed / progress.total * 100,
+        )
+      })
+      const skipped = tracks.length > tracksToSend.length ? ` ${t('Unavailable or duplicate tracks were skipped.')}` : ''
+      toast.close(`${t('Sent {count} songs to {device}.', { count: result.copied, device: device.name })}${skipped}`)
+    } catch (error) {
+      const copied = Math.min(Number(error?.copied) || 0, tracksToSend.length)
+      const message = copied
+        ? t('Sent {copied} of {total} songs to {device}; the rest could not be copied: {error}', { copied, total: tracksToSend.length, device: device.name, error: error.message })
+        : t('Could not send songs to {device}: {error}', { device: device.name, error: error.message })
+      toast.close(message)
+    }
+  }
+  const mobileMenuItems = async tracks => {
+    if (!api.isElectron || !transferableTracks(tracks).length || !window.electron?.getLinkDevices) return []
+    try {
+      const devices = connectedPhones(await window.electron.getLinkDevices())
+      return devices.map(device => ({
+        label: devices.length === 1 ? 'Send to mobile' : 'Send to mobile: {device}',
+        labelValues: devices.length === 1 ? undefined : { device: device.name },
+        icon: Smartphone,
+        onSelect: () => sendToPhone(device, tracks),
+      }))
+    } catch (error) {
+      showToast(t('Could not check connected phones: {error}', { error: error?.message || t('Unknown error') }))
+      return []
+    }
+  }
+  const openTrackMenu = async (event, track, section = 'fresh') => {
+    const request = ++menuRequestRef.current
+    const position = {
+      clientX: event.clientX,
+      clientY: event.clientY,
+      preventDefault() {},
+      stopPropagation() {},
+    }
+    event.preventDefault()
+    event.stopPropagation()
+    const mobileItems = await mobileMenuItems([track])
+    if (request !== menuRequestRef.current) return
+    return menu.open(position, [
       { label: 'Play', icon: Play, onSelect: () => playRecommendation(track, shelfContext(recommendationSource, section), shelfTracks(section)) },
       { label: 'Play next', icon: Clock, onSelect: () => withRecommendation(track, playNextMany) },
       { label: 'Add to queue', icon: ListEnd, onSelect: () => withRecommendation(track, addToQueueMany) },
       { label: 'Add to playlist…', icon: Plus, onSelect: () => withRecommendation(track, addToPlaylistMany) },
       { label: 'Download song', icon: Download, onSelect: () => withRecommendation(track, downloadRecommendations) },
+      ...mobileItems,
       { label: 'Start radio', icon: Radio, onSelect: () => startRadio(track) },
       { separator: true },
       ...followMenu(track.artist),
@@ -760,13 +810,27 @@ function HomeContent({ user }) {
   const picks = madeForYou(uidKey, mixes)
   const pickTracks = picks.map(pick => pick.track)
   const madeForYouContext = { type: 'made-for-you', name: 'Made for you', path: '/home/home' }
-  const openPickMenu = (event, track) => menu.open(event, [
-    { label: 'Play next', icon: ListEnd, onSelect: () => playNextMany([track]) },
-    { label: 'Add to queue', icon: ListPlus, onSelect: () => addToQueueMany([track]) },
-    { label: 'Add to playlist…', icon: Plus, onSelect: () => addToPlaylistMany([track]) },
-    { separator: true },
-    { label: 'Go to artist', icon: User, onSelect: () => navigate(artistPath(track.artist)) },
-  ])
+  const openPickMenu = async (event, track) => {
+    const request = ++menuRequestRef.current
+    const position = {
+      clientX: event.clientX,
+      clientY: event.clientY,
+      preventDefault() {},
+      stopPropagation() {},
+    }
+    event.preventDefault()
+    event.stopPropagation()
+    const mobileItems = await mobileMenuItems([track])
+    if (request !== menuRequestRef.current) return
+    return menu.open(position, [
+      { label: 'Play next', icon: ListEnd, onSelect: () => playNextMany([track]) },
+      { label: 'Add to queue', icon: ListPlus, onSelect: () => addToQueueMany([track]) },
+      { label: 'Add to playlist…', icon: Plus, onSelect: () => addToPlaylistMany([track]) },
+      ...mobileItems,
+      { separator: true },
+      { label: 'Go to artist', icon: User, onSelect: () => navigate(artistPath(track.artist)) },
+    ])
+  }
   const selectedMixId = tab === 'home' && route.section?.startsWith('mix-')
     ? decodeURIComponent(route.section.slice(4)) : null
   const selectedMix = mixes.find(mix => String(mix.id) === selectedMixId)

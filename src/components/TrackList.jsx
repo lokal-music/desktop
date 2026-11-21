@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Play, Pause, Heart, Plus, Camera, FolderOpen, Trash2, Music, LibraryBig, Clock, ListEnd, GripVertical, X, Check, Edit2, Search, Download, AlertCircle, Gem, Disc3, User, ListMinus, MoreHorizontal, Globe, Radio, ChevronUp, ChevronDown } from 'lucide-react'
+import { Play, Pause, Heart, Plus, Camera, FolderOpen, Trash2, Music, LibraryBig, Clock, ListEnd, GripVertical, X, Check, Edit2, Search, Download, AlertCircle, Gem, Disc3, User, ListMinus, MoreHorizontal, Globe, Radio, Smartphone, ChevronUp, ChevronDown } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { showToast, showLoadingToast } from './Toaster'
 import { canGetLossless, openLossless, formatLabel, fullResolutionLabel, qualityTagLabel, isSuspect, tierOf, TIERS, losslessMenuItem, losslessManyMenuItem } from '../quality'
@@ -42,6 +42,7 @@ import { useGhostDownloadSources } from './useGhostDownloadSources'
 import { useGhostDurationConfirmation } from './useGhostDurationConfirmation'
 import { nextPlaylistSort } from '../playlistSorting'
 import { useTranslation } from '../i18n'
+import { connectedPhones, sendTracksToPhone, transferableTracks } from '../sendToMobile.mjs'
 
 const LARGE_LIST_STEP = 200
 // Large lists are windowed: only the rows near the viewport are mounted, with
@@ -209,6 +210,7 @@ export default function TrackList({ tracks = [], showQuality = false, onRemove =
   const mergedTracks = tracks.map(track => trackOverrides[track.id] ? { ...track, ...trackOverrides[track.id] } : track)
   const navigate = useNavigate()
   const menu = useContextMenu()
+  const menuRequestRef = useRef(0)
   // The row whose ⋯ opened the menu (its aria-expanded), until the menu closes.
   const menuId = useId()
   const [menuFor, setMenuFor] = useState(null)
@@ -621,6 +623,28 @@ export default function TrackList({ tracks = [], showQuality = false, onRemove =
     } catch { toast.close('Could not download the selected songs.') }
   }
 
+  const sendToPhone = async (device, list) => {
+    const tracksToSend = transferableTracks(list)
+    if (!tracksToSend.length) return
+    const toast = showLoadingToast(t('Sending {count} songs to {device}…', { count: tracksToSend.length, device: device.name }))
+    try {
+      const result = await sendTracksToPhone(window.electron, device.id, tracksToSend, progress => {
+        toast.update(
+          t('Copying batch {batch} of {batches} ({completed}/{total} songs)…', progress),
+          progress.completed / progress.total * 100,
+        )
+      })
+      const skipped = list.length > tracksToSend.length ? ` ${t('Unavailable or duplicate tracks were skipped.')}` : ''
+      toast.close(`${t('Sent {count} songs to {device}.', { count: result.copied, device: device.name })}${skipped}`)
+    } catch (error) {
+      const copied = Math.min(Number(error?.copied) || 0, tracksToSend.length)
+      const message = copied
+        ? t('Sent {copied} of {total} songs to {device}; the rest could not be copied: {error}', { copied, total: tracksToSend.length, device: device.name, error: error.message })
+        : t('Could not send songs to {device}: {error}', { device: device.name, error: error.message })
+      toast.close(message)
+    }
+  }
+
   /**
    * The songs a row's menu acts on: the selection when the row is in it, else
    * just the row. For one song it also has what the row's buttons do (like,
@@ -636,7 +660,16 @@ export default function TrackList({ tracks = [], showQuality = false, onRemove =
     return navigateToArtistName(navigate, track, firstArtist || track?.artist)
   }
 
-  const openTrackMenu = (event, track) => {
+  const openTrackMenu = async (event, track) => {
+    const request = ++menuRequestRef.current
+    const position = {
+      clientX: event.clientX,
+      clientY: event.clientY,
+      preventDefault() {},
+      stopPropagation() {},
+    }
+    event.preventDefault()
+    event.stopPropagation()
     setMenuFor(null) // a right click; the ⋯ marks its row after this
     const ids = selection.contextSelect(track.id)
     const list = mergedTracks.filter(item => ids.includes(String(item.id)))
@@ -645,7 +678,22 @@ export default function TrackList({ tracks = [], showQuality = false, onRemove =
     const deletable = resolveTracks ? [] : libraryTracks(list)
     const oneGhost = one && (isGhostTrack(one) || one.missing)
     const liked = one && likedIds.has(one.id)
-    menu.open(event, [
+    let mobileItems = []
+    if (api.isElectron && transferableTracks(list).length && window.electron?.getLinkDevices) {
+      try {
+        const devices = connectedPhones(await window.electron.getLinkDevices())
+        mobileItems = devices.map(device => ({
+          label: devices.length === 1 ? 'Send to mobile' : 'Send to mobile: {device}',
+          labelValues: devices.length === 1 ? undefined : { device: device.name },
+          icon: Smartphone,
+          onSelect: () => sendToPhone(device, list),
+        }))
+      } catch (error) {
+        showToast(t('Could not check connected phones: {error}', { error: error?.message || t('Unknown error') }))
+      }
+    }
+    if (request !== menuRequestRef.current) return
+    menu.open(position, [
       { label: one ? 'Play' : `Play${count}`, icon: Play, onSelect: () => (one ? handlePlay(one, { stopPropagation() {} }) : playMany(list)) },
       { label: 'Play next', icon: Clock, onSelect: () => runResolved(list, playNextMany) },
       { label: 'Add to queue', icon: ListEnd, onSelect: () => runResolved(list, addToQueueMany) },
@@ -654,6 +702,7 @@ export default function TrackList({ tracks = [], showQuality = false, onRemove =
       one && onQuickAdd && { label: 'Add to this playlist', icon: LibraryBig, onSelect: () => handleQuickAdd(one) },
       one && (!oneGhost || needsResolution(one)) && { label: liked ? 'Remove from Liked Songs' : 'Like', icon: Heart, onSelect: () => toggleLike(one, { stopPropagation() {} }) },
        list.some(item => isStreamed(item) || needsResolution(item) || isMobileLinkedTrack(item)) && { label: resolveTracks || !one ? `Download${one ? ' song' : count}` : 'Save to library', icon: Download, onSelect: () => downloadSongs(list) },
+       ...mobileItems,
        one && atmosDownloadRef(one) && { label: 'Download Dolby Atmos', icon: Download, onSelect: async () => {
          const response = await downloadAtmosVersion(one).catch(error => ({ error: error.message }))
          showToast(response?.error || 'Dolby Atmos download queued.')

@@ -177,7 +177,8 @@ function createLink({ server, db, remote, enabled = () => true, advertiseDesktop
       if (!socket || !store.devices(currentUser()).some(d=>d.id===id&&!d.revoked)) return Promise.resolve({ok:false,error:'Phone is not connected.'})
       const requestId=randomUUID()
       return new Promise(resolve=>{
-        const timer=setTimeout(()=>{pending.delete(requestId);resolve({ok:false,error:'Phone did not respond.'})},String(command.action).startsWith('handoff')?120000:7000)
+        const timeout = command.action === 'copyTracksToPhone' ? 15 * 60 * 1000 : String(command.action).startsWith('handoff') ? 120000 : 7000
+        const timer=setTimeout(()=>{pending.delete(requestId);resolve({ok:false,error:'Phone did not respond.'})},timeout)
         pending.set(requestId,{deviceId:id,resolve,timer});send(socket,'command',command,requestId)
       })
     },

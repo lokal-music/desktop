@@ -403,6 +403,7 @@ router.get('/library/file-size/:trackId', async (req, res) => {
 })
 
 router.get('/library/tracks', (req, res) => {
+  if (!pairedUser(req, res)) return
   const db = getDB()
   const q = queryText(req.query.q)
   const { limit, offset } = pagination(req, 50, 250)
