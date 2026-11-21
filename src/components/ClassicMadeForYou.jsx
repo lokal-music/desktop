@@ -11,7 +11,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { animate, motion, useMotionValue, useTransform } from 'framer-motion'
 import { Play } from 'lucide-react'
 import FadeImg from './FadeImg'
-import { trackArtURL, trackFullArtURL } from '../onlineTracks'
+import { trackArtURL } from '../onlineTracks'
 import { useTranslation } from '../i18n'
 
 const ASPECT = 3 / 4 // card width / height
@@ -167,7 +167,7 @@ export default function ClassicMadeForYou({ picks, onPlay, onContextMenu }) {
             onPress={() => { if (dragged.current) { dragged.current = false; return } onPlay(index) }}>
             <button type="button" aria-label={t('Play {title} by {artist}', { title: pick.track.title, artist: pick.track.artist })} onContextMenu={event => onContextMenu?.(event, pick.track)}
               className="group relative block h-full w-full overflow-hidden rounded-2xl border border-white/10 bg-card text-left shadow-[0_18px_40px_rgba(0,0,0,0.45)] transition-[translate,box-shadow] duration-300 ease-out hover:shadow-[0_26px_50px_rgba(0,0,0,0.55)] hover:-translate-y-2">
-              {(trackFullArtURL(pick.track) || trackArtURL(pick.track)) ? <FadeImg src={trackFullArtURL(pick.track) || trackArtURL(pick.track)} className="pointer-events-none absolute inset-0 h-full w-full object-cover" /> : <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-black" />}
+              {trackArtURL(pick.track) ? <FadeImg src={trackArtURL(pick.track)} className="pointer-events-none absolute inset-0 h-full w-full object-cover" /> : <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-black" />}
               <div className="pointer-events-none absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-black/85 via-black/40 to-transparent" />
               <span className="absolute left-1/2 top-1/2 flex h-12 w-12 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-accent text-[rgb(var(--bg-rgb))] opacity-0 shadow-lg transition-opacity group-hover:opacity-100"><Play size={20} fill="currentColor" /></span>
               <span className="absolute inset-x-0 bottom-0 p-3.5">

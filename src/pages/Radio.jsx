@@ -6,7 +6,7 @@ import TrackList from '../components/TrackList'
 import { usePlayerStore, useAppStore } from '../store/player'
 import { buildRadio, emptyRadioMessage } from '../radioActions'
 import { saveAsPlaylist } from '../trackActions'
-import { trackArtURL, trackFullArtURL } from '../onlineTracks'
+import { trackArtURL } from '../onlineTracks'
 import FadeImg from '../components/FadeImg'
 import { showToast } from '../components/Toaster'
 import { api } from '../api'
@@ -114,7 +114,7 @@ export default function Radio() {
     showToast(playlist ? t('Radio saved as a playlist') : t('Could not save radio'))
   }
 
-  const heroArt = trackFullArtURL(seed) || trackArtURL(seed)
+  const heroArt = trackArtURL(seed)
   return <div className="min-h-full p-6 pb-10"><div className="mx-auto max-w-5xl space-y-7">
     <button type="button" onClick={() => navigate(-1)} className="inline-flex items-center gap-2 text-sm text-muted hover:text-white"><ArrowLeft size={15} />{t("Back")}</button>
     <div className="flex flex-col gap-5 @md:flex-row @md:items-end"><div className="h-36 w-36 overflow-hidden rounded-xl bg-card shadow-xl">{heroArt ? <FadeImg src={heroArt} className="h-full w-full object-cover" /> : <RadioIcon size={38} className="m-12 text-accent" />}</div><div><p className="text-[11px] font-display uppercase tracking-[0.3em] text-accent">{t("Radio")}</p><h1 className="mt-2 text-3xl font-medium text-white">{name}</h1><p className="mt-2 text-sm text-muted">{t('A continuous mix based on')} {seed?.title || seed?.artist || t('your selection')}.</p><div className="mt-4 flex gap-2"><button type="button" onClick={playRadio} disabled={!tracks.length} className="inline-flex items-center gap-2 rounded-full bg-white px-5 py-2 text-sm font-medium text-black disabled:opacity-40"><Play size={15} fill="currentColor" />{t("Play radio")}</button><button type="button" onClick={regenerate} disabled={building} className="inline-flex items-center gap-2 rounded-full border border-white/15 px-4 py-2 text-sm text-white/75"><RefreshCw size={15} className={building ? 'animate-spin' : ''} />{t("Regenerate")}</button><button type="button" onClick={save} disabled={!tracks.length} className="inline-flex items-center gap-2 rounded-full border border-white/15 px-4 py-2 text-sm text-white/75 disabled:opacity-40"><ListPlus size={15} />{t('Save')}</button></div></div></div>

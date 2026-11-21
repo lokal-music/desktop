@@ -8,7 +8,7 @@ import { test } from 'node:test'
 const require = createRequire(import.meta.url)
 const { initDB, getDB } = require('../electron/ipc/db')
 const { scanFolder, applyFileChanges } = require('../electron/ipc/scanner')
-const { stopWatching, scanRootForCatchUp, discardPendingForRoot, busyRetryDelay, databaseBusy } = require('../electron/libraryWatcher')
+const { stopWatching, scanRootForCatchUp, scheduleStartupReconciliation, deferStartupWork, discardPendingForRoot, busyRetryDelay, databaseBusy } = require('../electron/libraryWatcher')
 const { noteFileWritten } = require('../electron/fileStamp')
 const scanMetadata = require('../electron/ipc/scannerMetadata')
 
@@ -231,6 +231,33 @@ test('NAS catch-up uses scanner inventory and safely prunes only after a complet
   assert.equal(row(gone), undefined)
   assert.equal(row(keep).id, retainedId)
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM tracks').get().n, 1)
+})
+
+test('startup reconciliation catches library changes made while the app was closed', async t => {
+  const { db, music, tags, reads, write, row } = fixture(t)
+  const updated = write('updated.mp3')
+  const removed = write('removed.mp3')
+  await scanFolder(music)
+  stopWatching()
+
+  tags['updated.mp3'] = { title: 'Updated while closed' }
+  write('updated.mp3', 'retagged while closed')
+  const added = write('added.mp3')
+  fs.rmSync(removed)
+  reads.length = 0
+
+  deferStartupWork(0)
+  scheduleStartupReconciliation([music])
+  const deadline = Date.now() + 5000
+  while (Date.now() < deadline &&
+    (row(added) == null || row(removed) != null || row(updated)?.title !== 'Updated while closed')) {
+    await new Promise(resolve => setTimeout(resolve, 50))
+  }
+
+  assert.ok(row(added), 'new files added while closed are indexed')
+  assert.equal(row(removed), undefined, 'files removed while closed leave the library')
+  assert.equal(row(updated).title, 'Updated while closed', 'changed tags are refreshed')
+  assert.deepEqual(reads.sort(), ['added.mp3', 'updated.mp3'])
 })
 
 test('a NAS overflow clears only that root\'s pending changes', () => {

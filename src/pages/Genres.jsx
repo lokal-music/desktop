@@ -10,7 +10,7 @@ import CoverPlay from '../components/CoverPlay'
 import { plural } from '../plural'
 import { useTranslation } from '../i18n'
 import TrackList from '../components/TrackList'
-import { isPlayable, trackArtURL, trackFullArtURL } from '../onlineTracks'
+import { isPlayable, trackArtURL } from '../onlineTracks'
 import { fetchAllTrackPages, shuffledLibraryTracks } from '../libraryHelpers'
 
 // Songs without any genre, as a genre of its own (see genreFilter in
@@ -183,12 +183,12 @@ export function GenreTracks() {
         <div className="h-28 w-28 flex-shrink-0 overflow-hidden rounded-2xl border border-border bg-elevated shadow-xl">
           {tracks.length > 0 ? (
             tracks.length < 4 ? (
-              (trackFullArtURL(tracks[0]) || trackArtURL(tracks[0])) ? <FadeImg src={trackFullArtURL(tracks[0]) || trackArtURL(tracks[0])} alt="" className="h-full w-full object-cover" /> : <div className="flex h-full w-full items-center justify-center"><Music size={36} className="text-muted" /></div>
+              trackArtURL(tracks[0]) ? <FadeImg src={trackArtURL(tracks[0])} alt="" className="h-full w-full object-cover" /> : <div className="flex h-full w-full items-center justify-center"><Music size={36} className="text-muted" /></div>
             ) : (
               <div className="grid h-full w-full grid-cols-2 grid-rows-2">
                 {tracks.slice(0, 4).map(track => (
-                  (trackFullArtURL(track) || trackArtURL(track))
-                    ? <FadeImg key={track.id} src={trackFullArtURL(track) || trackArtURL(track)} alt="" className="h-full w-full object-cover" />
+                  trackArtURL(track)
+                    ? <FadeImg key={track.id} src={trackArtURL(track)} alt="" className="h-full w-full object-cover" />
                     : <div key={track.id} className="flex items-center justify-center"><Music size={20} className="text-muted" /></div>
                 ))}
               </div>

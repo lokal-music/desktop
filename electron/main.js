@@ -552,7 +552,13 @@ function createWindow() {
     // Don't start file-index reconciliation during the first visible layout
     // frames. Continue watching immediately; buffered changes are applied
     // after the page has settled, never discarded.
-    try { require('./libraryWatcher').deferStartupWork(4500) } catch {}
+    try {
+      const watcher = require('./libraryWatcher')
+      watcher.deferStartupWork(4500)
+      watcher.scheduleStartupReconciliation()
+    } catch (error) {
+      console.warn('[libraryWatcher] Startup reconciliation not scheduled:', error.message)
+    }
     mainWindow.webContents.send('perf-settings', loadPerformanceSettings())
     if (pendingLastfmAuthToken) {
       mainWindow.webContents.send('lastfm:auth-token', pendingLastfmAuthToken)

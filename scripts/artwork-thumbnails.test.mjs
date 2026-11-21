@@ -8,7 +8,7 @@ import { createRequire } from 'node:module'
 const require = createRequire(import.meta.url)
 const sharp = require('sharp')
 const { makeThumb, writeCover, THUMB_SIZE } = require('../electron/artwork/thumb.js')
-const { filePicture, fullCoverForTrack } = require('../electron/artwork/fullCover.js')
+const { filePicture } = require('../electron/artwork/fullCover.js')
 const { shrinkCovers } = require('../electron/artwork/shrinkCovers.js')
 const { writeEmbeddedArtwork } = require('../electron/fileArtwork.js')
 const { DatabaseSync } = require('node:sqlite')
@@ -57,44 +57,6 @@ test('full picture can be read back from a local audio file', async t => {
   const meta = await sharp(result.bytes).metadata()
   assert.equal(meta.width, 300)
   assert.equal(meta.height, 300)
-})
-
-test('full-cover lookup returns the embedded original for a cached thumbnail', async t => {
-  const dir = tempDir()
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
-  const storageDir = path.join(dir, 'data')
-  const artworkDir = path.join(storageDir, 'artwork')
-  const song = path.join(dir, 'song.mp3')
-  const cover = await picture(800, 800)
-  silentMp3(song)
-  writeEmbeddedArtwork(song, cover)
-  const thumbnailPath = await writeCover(artworkDir, 't-full-cover', cover)
-
-  const dbModulePath = require.resolve('../electron/ipc/db.js')
-  const previousDbModule = require.cache[dbModulePath]
-  const dbModule = new (require('node:module'))(dbModulePath)
-  dbModule.filename = dbModulePath
-  dbModule.loaded = true
-  dbModule.exports = { getStorageDir: () => storageDir }
-  require.cache[dbModulePath] = dbModule
-  t.after(() => {
-    if (previousDbModule) require.cache[dbModulePath] = previousDbModule
-    else delete require.cache[dbModulePath]
-  })
-
-  const db = {
-    prepare(query) {
-      if (query.startsWith('SELECT file_path, artwork_path')) {
-        return { get: () => ({ file_path: song, artwork_path: thumbnailPath }) }
-      }
-      return { get: () => undefined }
-    },
-  }
-  const full = await fullCoverForTrack(db, 't-full-cover')
-  assert.ok(full)
-  const fullMeta = await sharp(full.bytes).metadata()
-  const thumbMeta = await sharp(thumbnailPath).metadata()
-  assert.ok(fullMeta.width > thumbMeta.width, 'large surfaces must receive the embedded original')
 })
 
 test('safe shrinking updates track rows, keeps non-embedded art, and removes replaced full-size cache', async t => {

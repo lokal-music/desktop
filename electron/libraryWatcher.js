@@ -41,6 +41,7 @@ const MAX_CATCH_UP_RETRIES = 3
 let deferUntil = 0
 let retryAfter = 0
 let busyFailures = 0
+let startupReconciliationScheduled = false
 
 function deferStartupWork(durationMs = 8000) {
   deferUntil = Math.max(deferUntil, Date.now() + Math.max(0, durationMs))
@@ -305,6 +306,15 @@ function catchUpLater(folder) {
   scheduleCatchUp()
 }
 
+function scheduleStartupReconciliation(folderPaths = configuredRoots()) {
+  if (startupReconciliationScheduled) return
+  startupReconciliationScheduled = true
+  for (const value of Array.isArray(folderPaths) ? folderPaths : []) {
+    if (typeof value !== 'string' || !value.trim()) continue
+    catchUpLater(path.resolve(value.trim()))
+  }
+}
+
 function attachWatcher(next) {
   if (watchers.has(next)) return
   try {
@@ -419,5 +429,5 @@ module.exports = {
   watchLibrary, watchLibraryRoots, stopWatching,
   isWorking: () => Boolean(running || activeCatchUps),
   scanRootForCatchUp: scan, discardPendingForRoot,
-  deferStartupWork, busyRetryDelay, databaseBusy,
+  deferStartupWork, scheduleStartupReconciliation, busyRetryDelay, databaseBusy,
 }
