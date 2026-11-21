@@ -8,6 +8,7 @@ const { reconcilePlaylists, savePlaylistSnapshot } = require('./reconcile')
 const { createLinkedLibraryRefresh } = require('./libraryRefresh')
 const { envelope, decode, text } = require('./protocol')
 const { advertise, reconcileDiscovery } = require('./discovery')
+const { createPendingCommands } = require('./pendingCommands')
 let instance
 
 function getLink() { return instance }
@@ -17,7 +18,7 @@ function createLink({ server, db, remote, enabled = () => true, advertiseDesktop
   const store = new LinkStore(db)
   installCapture(store, currentUser)
   const libraryRefresh = createLinkedLibraryRefresh()
-  const sockets = new Map(), pending = new Map(), snapshots = new Map()
+  const sockets = new Map(), pending = createPendingCommands(), snapshots = new Map()
   const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 })
   let stopDiscovery
   let lastTheme=''
@@ -45,7 +46,15 @@ function createLink({ server, db, remote, enabled = () => true, advertiseDesktop
       })
     } catch {}
   }
-  function closeDevice(id, reason = 'revoked') { sockets.get(id)?.close(4001,reason); sockets.delete(id); snapshots.delete(id) }
+  function closeDevice(id, reason = 'revoked') {
+    const socket = sockets.get(id)
+    if (socket) {
+      pending.settleSocket(socket, { ok: false, error: 'Phone is no longer connected.' })
+      socket.close(4001,reason)
+    }
+    sockets.delete(id)
+    snapshots.delete(id)
+  }
   function assertActive(device) {
     if (!enabled() || device.user_id !== currentUser() || (!device.legacy && !db.prepare('SELECT id FROM remote_devices WHERE id=? AND revoked=0').get(device.id))) throw new Error('Device access is no longer available')
   }
@@ -84,8 +93,7 @@ function createLink({ server, db, remote, enabled = () => true, advertiseDesktop
             break
           case 'state': snapshots.set(device.id,{...body,updatedAt:Date.now()}); break
           case 'ack': {
-            const request=pending.get(message.id)
-            if (request?.deviceId===device.id) { clearTimeout(request.timer);pending.delete(message.id);request.resolve(body) }
+            pending.resolve(message.id, socket, body)
             break
           }
           case 'command': {
@@ -130,7 +138,10 @@ function createLink({ server, db, remote, enabled = () => true, advertiseDesktop
       } catch (error) { send(socket,'ack',{ok:false,error:text(error.message,200)},message?.id) }
     })
     socket.on('error',()=>{})
-    socket.on('close',()=>{ if(sockets.get(device.id)===socket){sockets.delete(device.id);snapshots.delete(device.id)} })
+    socket.on('close',()=>{
+      pending.settleSocket(socket, { ok: false, error: 'Phone is no longer connected.' })
+      if(sockets.get(device.id)===socket){sockets.delete(device.id);snapshots.delete(device.id)}
+    })
   })
   const stateListener=state => {
     ensureDiscovery()
@@ -176,13 +187,12 @@ function createLink({ server, db, remote, enabled = () => true, advertiseDesktop
       const socket=sockets.get(id)
       if (!socket || !store.devices(currentUser()).some(d=>d.id===id&&!d.revoked)) return Promise.resolve({ok:false,error:'Phone is not connected.'})
       const requestId=randomUUID()
-      return new Promise(resolve=>{
-        const timeout = command.action === 'copyTracksToPhone' ? 15 * 60 * 1000 : String(command.action).startsWith('handoff') ? 120000 : 7000
-        const timer=setTimeout(()=>{pending.delete(requestId);resolve({ok:false,error:'Phone did not respond.'})},timeout)
-        pending.set(requestId,{deviceId:id,resolve,timer});send(socket,'command',command,requestId)
-      })
+      const timeout = command.action === 'copyTracksToPhone' ? 15 * 60 * 1000 : String(command.action).startsWith('handoff') ? 120000 : 7000
+      const result = pending.wait({ requestId, socket, timeout })
+      send(socket,'command',command,requestId)
+      return result
     },
-    close() {clearInterval(heartbeat);libraryRefresh.close();stopDiscovery?.();remote.events.removeListener('state',stateListener);remote.events.removeListener('theme',themeListener);for(const socket of sockets.values())socket.close(1001);wss.close();for(const request of pending.values()){clearTimeout(request.timer);request.resolve({ok:false,error:'Link closed'})}instance=null},
+    close() {clearInterval(heartbeat);libraryRefresh.close();stopDiscovery?.();remote.events.removeListener('state',stateListener);remote.events.removeListener('theme',themeListener);pending.settleAll({ok:false,error:'Link closed'});for(const socket of sockets.values())socket.close(1001);wss.close();instance=null},
   }
   server.once('close',api.close)
   instance=api

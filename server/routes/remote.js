@@ -2,6 +2,7 @@ const express = require('express')
 const { getDB } = require('../../electron/ipc/db')
 const { getRemoteState, sendRemoteCommand, getRemoteConnectionInfo } = require('../../electron/ipc/remote')
 const { smartTracks, playlistRules } = require('../../electron/playlists/smart')
+const { findTrackRows, validateTrackLookupIds } = require('../remoteTrackLookup')
 
 const router = express.Router()
 
@@ -423,6 +424,15 @@ router.get('/library/tracks', (req, res) => {
   `).all(...params, limit, offset)
   const total = db.prepare(`SELECT COUNT(*) AS total FROM tracks t WHERE ${clause}`).get(...params)?.total || 0
   return res.json({ items: compactTracks(rows), total, limit, offset, hasMore: offset + rows.length < total })
+})
+
+router.post('/library/tracks/lookup', (req, res) => {
+  if (!pairedUser(req, res)) return
+  const ids = req.body?.ids
+  const error = validateTrackLookupIds(ids)
+  if (error) return res.status(400).json({ error })
+  const rows = findTrackRows(getDB(), ids)
+  return res.set('Cache-Control', 'private, no-store').json({ items: compactTracks(rows) })
 })
 
 router.get('/library/albums', (req, res) => {

@@ -5,6 +5,8 @@ import { connectedPhones, sendTracksToPhone, transferableTracks } from '../src/s
 
 const remote = readFileSync(new URL('../server/routes/remote.js', import.meta.url), 'utf8')
 const tracksEndpoint = remote.match(/router\.get\('\/library\/tracks'[\s\S]*?\n\}\)/)?.[0] || ''
+const lookupEndpoint = remote.match(/router\.post\('\/library\/tracks\/lookup'[\s\S]*?\n\}\)/)?.[0] || ''
+const home = readFileSync(new URL('../src/pages/Home.jsx', import.meta.url), 'utf8')
 
 test('only unique, present local tracks can be sent', () => {
   const tracks = [
@@ -67,4 +69,23 @@ test('connected phone choices exclude offline and revoked devices', () => {
 test('the mobile metadata catalogue is paired-only and includes IDs and file types', () => {
   assert.match(tracksEndpoint, /if \(!pairedUser\(req, res\)\) return/)
   assert.match(remote, /id: track\.id,[\s\S]*?fileType: require\('path'\)\.extname/)
+})
+
+test('exact mobile track lookup is paired-only and validates IDs before querying', () => {
+  assert.match(lookupEndpoint, /if \(!pairedUser\(req, res\)\) return/)
+  assert.match(lookupEndpoint, /validateTrackLookupIds\(ids\)/)
+  assert.match(lookupEndpoint, /return res\.status\(400\)\.json\(\{ error \}\)/)
+  assert.match(lookupEndpoint, /items: compactTracks\(rows\)/)
+})
+
+test('every synchronous Home menu opener invalidates pending track menus', () => {
+  assert.match(home, /const openMenu = \(event, items\) => \{\s*menuRequestRef\.current\+\+/)
+  assert.equal((home.match(/menu\.open\(event,/g) || []).length, 1)
+  assert.match(home, /const openMixMenu = \(event, mix\) => openMenu\(event,/)
+  assert.match(home, /const openArtistMenu = \(event, artist\) => openMenu\(event,/)
+  assert.match(home, /onEditCategory: event => openMenu\(event,/)
+  assert.match(home, /onProviderMixMenu: \(event, mix\) => openMenu\(event,/)
+  assert.match(home, /onAlbumMenu: \(event, album\) => openMenu\(event,/)
+  assert.match(home, /const openTrackMenu = async[\s\S]{0,100}?const request = \+\+menuRequestRef\.current/)
+  assert.match(home, /const openPickMenu = async[\s\S]{0,100}?const request = \+\+menuRequestRef\.current/)
 })

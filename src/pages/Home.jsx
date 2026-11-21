@@ -363,6 +363,10 @@ function HomeContent({ user }) {
   const navigate = useNavigate()
   const menu = useContextMenu()
   const menuRequestRef = useRef(0)
+  const openMenu = (event, items) => {
+    menuRequestRef.current++
+    return menu.open(event, items)
+  }
   const [showDiscoveryEditor, setShowDiscoveryEditor] = useState(false)
   const [shelfLayouts, setShelfLayouts] = useState(() => Object.fromEntries(
     Object.keys(DISCOVERY_SHELF_DEFAULTS).map(provider => {
@@ -604,7 +608,7 @@ function HomeContent({ user }) {
   } : discovery
   const recommendationTracks = data?.freshFinds || []
   const goHome = (next, section = null) => navigate(next === 'home' ? '/' : `/home/${next}${section ? `/${section}` : ''}`)
-  const openMixMenu = (event, mix) => menu.open(event, [
+  const openMixMenu = (event, mix) => openMenu(event, [
     { label: 'Play', icon: Play, onSelect: () => playQueue(mix.tracks, 0, localMixContext(mix)) },
     { label: 'Play next', icon: Clock, onSelect: () => playNextMany(mix.tracks) },
     { label: 'Add to queue', icon: ListEnd, onSelect: () => addToQueueMany(mix.tracks) },
@@ -613,7 +617,7 @@ function HomeContent({ user }) {
     { label: 'Save as playlist', icon: ListPlus, onSelect: () => saveMix(mix), disabled: !!saving },
   ])
   const visibleArtists = artists => (Array.isArray(artists) ? artists : []).filter(artist => !hiddenArtists.has(discoveryArtistKey(artist.name)))
-  const openArtistMenu = (event, artist) => menu.open(event, [
+  const openArtistMenu = (event, artist) => openMenu(event, [
     { label: 'Start artist radio', icon: Radio, onSelect: () => startRadio({ artist: artist.name, type: 'artist' }) },
     { label: 'Go to artist', icon: User, onSelect: () => navigate(artist.source === 'library' ? `/artist/${encodeURIComponent(artist.id)}` : artistPath(artist.name), { state: { name: artist.name } }) },
     { separator: true },
@@ -763,12 +767,12 @@ function HomeContent({ user }) {
   const sectionProps = {
     data: data ? { ...data, artists: visibleArtists(data.artists) } : data, localArtists: visibleArtists(localArtists), allArtists: [...localArtists, ...(discovery?.artists || [])], source: recommendationSource, loading: discoveryLoading, error: discoveryError,
     layout: shelfLayouts[recommendationSource] || restoreShelfLayout(recommendationSource),
-    onEditCategory: event => menu.open(event, [{ label: 'Edit', icon: Pencil, onSelect: () => setShowDiscoveryEditor(true) }]),
+    onEditCategory: event => openMenu(event, [{ label: 'Edit', icon: Pencil, onSelect: () => setShowDiscoveryEditor(true) }]),
     getDownloadTrack: resolveDownloadTrack,
     onOpenShelf: section => navigate(shelfContext(recommendationSource, section).path),
     onProviderMixPlay: playProviderMix,
     onProviderMixOpen: mix => navigate(providerMixContext(mix).path, { state: { title: mix.title, cover: secureImage(mix.artwork_url || mix.thumbnail) } }),
-    onProviderMixMenu: (event, mix) => menu.open(event, [
+    onProviderMixMenu: (event, mix) => openMenu(event, [
       { label: 'Open playlist', icon: ListMusic, onSelect: () => sectionProps.onProviderMixOpen(mix) },
       { label: 'Play mix', icon: Play, onSelect: () => playProviderMix(mix) },
       { label: 'Save as playlist', icon: ListPlus, onSelect: () => saveProviderMix(mix) },
@@ -791,7 +795,7 @@ function HomeContent({ user }) {
     onRadio: startRadio, onArtistMenu: openArtistMenu,
     onArtistPlay: artist => artist.source === 'library' ? navigate(`/artist/${encodeURIComponent(artist.id)}`) : playCatalogue('artist', artist),
     onAlbumPlay: album => playCatalogue('album', album),
-    onAlbumMenu: (event, album) => menu.open(event, [
+    onAlbumMenu: (event, album) => openMenu(event, [
       { label: 'Play album', icon: Play, onSelect: () => playCatalogue('album', album) },
       { label: 'Save as playlist', icon: ListPlus, onSelect: () => saveRecommendedAlbum(album) },
       { label: 'Download album', icon: Download, onSelect: () => downloadRecommendedAlbum(album) },
