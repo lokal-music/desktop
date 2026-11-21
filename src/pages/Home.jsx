@@ -109,7 +109,7 @@ function MixCard({ mix, onClick, onOpen, onSave, saving, onContextMenu }) {
         <div className="w-full aspect-square rounded-lg overflow-hidden bg-card relative">
           {arts.length === 0 && <div className="w-full h-full flex items-center justify-center text-subtle"><Radio size={36} /></div>}
           {arts.length === 1 && <MixArtwork track={arts[0]} />}
-          {arts.length > 1 && <div className="w-full h-full grid grid-cols-2">{arts.map((track, index) => <div key={index} className="relative min-w-0 min-h-0"><MixArtwork track={track} /></div>)}</div>}
+          {arts.length > 1 && <div className="w-full h-full grid grid-cols-2">{arts.map((track, index) => <div key={index} className="relative aspect-square min-w-0 min-h-0"><MixArtwork track={track} /></div>)}</div>}
           <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity"><div className="w-10 h-10 bg-accent rounded-full flex items-center justify-center shadow-xl"><Play size={16} fill="currentColor" className="text-base translate-x-0.5" /></div></div>
         </div>
       </motion.button>
