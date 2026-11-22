@@ -7,6 +7,7 @@ import { useCachedState, usePageReady } from '../pageCache'
 import { useAppStore, usePlayerStore } from '../store/player'
 import TrackList from '../components/TrackList'
 import QualityImage from '../components/QualityImage'
+import { trackFullArtURL } from '../onlineTracks'
 import { latestPeriod, listenerTimeZone, nextPeriodBoundary, periodPlace, periodQuery, recapPlaylistName, recapTree, treePeriods, markRecapOpened } from '../recapPeriods'
 import { plural } from '../plural'
 import { filteredGenres, fmtDate, fmtHour, fmtMinutes, trackArt } from '../recapText'
@@ -476,6 +477,7 @@ function RecapContent({ user, sources = 'all', onSourcesChange }) {
   const replayQueue = recap?.replayQueue || topTracks
   const heroTrack = topTracks[0]
   const heroArt = trackArt(heroTrack)
+  const heroCoverArt = trackFullArtURL(heroTrack)
 
   // The share card: the period's top covers, its numbers and top artists.
   const shareRecap = () => {
@@ -672,7 +674,7 @@ function RecapContent({ user, sources = 'all', onSourcesChange }) {
               </div>
               <div className="rounded-xl border border-border bg-black/20 p-4">
                 <div className="aspect-square overflow-hidden rounded-lg bg-card">
-                  {heroArt ? <QualityImage src={heroArt} className="h-full w-full object-cover" /> : <div className="flex h-full w-full items-center justify-center text-muted"><Disc3 size={32} /></div>}
+                  {heroArt ? <QualityImage src={heroCoverArt} className="h-full w-full object-cover" /> : <div className="flex h-full w-full items-center justify-center text-muted"><Disc3 size={32} /></div>}
                 </div>
                 <p className="mt-3 truncate text-sm font-medium text-white">{heroTrack?.title}</p>
                 <p className="truncate text-xs text-muted">{heroTrack?.artist}</p>
