@@ -52,7 +52,7 @@ function SettingField({ field, value, onChange, onAction }) {
 }
 
 /** An installed addon: header, on/off, remove, and its settings. */
-function AddonCard({ addon, onChanged, focused = false }) {
+function AddonCard({ addon, onChanged, focused = false, authEvent = null }) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(focused)
   const cardRef = useRef(null)
@@ -70,12 +70,12 @@ function AddonCard({ addon, onChanged, focused = false }) {
   // Opened from a "finish setting up" link: this card, opened and in view.
   useEffect(() => { if (focused) { setOpen(true); cardRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' }) } }, [focused])
   // The login / verification window closed: its access was checked again.
-  useEffect(() => api.onAddonAuthChanged(status => {
-    if (status?.key !== addon.key) return
+  useEffect(() => {
+    if (!authEvent?.status) return
+    const { status } = authEvent
     setAuth(status)
     setMessage(status.authenticated ? t('Access verified. This source can now stream and download.') : t(status.error || "Verification wasn't completed. Try again when you're ready."))
-    onChanged()
-  }), [addon.key, t])
+  }, [authEvent, t])
   const needsSetup = addon.enabled && addon.access && !addon.access.ready
   const verified = auth ? !!auth.authenticated : !!addon.access?.verified
 
@@ -285,6 +285,7 @@ export default function AddonsSettings() {
   const [installKey, setInstallKey] = useState('')
   const [installing, setInstalling] = useState(false)
   const [message, setMessage] = useState(null) // { error?, text }
+  const [authEvents, setAuthEvents] = useState({})
 
   // Only the latest request applies; a failed one keeps the list shown.
   const loadRequest = useRef(0)
@@ -300,6 +301,13 @@ export default function AddonsSettings() {
   }
   useEffect(() => { load() }, [])
   const onChanged = () => { load(); changed() }
+  const onChangedRef = useRef(onChanged)
+  onChangedRef.current = onChanged
+  useEffect(() => api.onAddonAuthChanged(status => {
+    if (!status?.key) return
+    setAuthEvents(prev => ({ ...prev, [status.key]: { status, seq: (prev[status.key]?.seq || 0) + 1 } }))
+    onChangedRef.current()
+  }), [])
 
   const install = async () => {
     if (!url.trim()) return
@@ -344,7 +352,7 @@ export default function AddonsSettings() {
         <p className="text-xs text-muted">{t("No addons installed.")}</p>
       ) : (
         <div className="space-y-3">
-          {addons.map(addon => <AddonCard key={addon.key} addon={addon} onChanged={onChanged} focused={addon.key === focusKey} />)}
+          {addons.map(addon => <AddonCard key={addon.key} addon={addon} onChanged={onChanged} focused={addon.key === focusKey} authEvent={authEvents[addon.key] || null} />)}
         </div>
       )}
     </div>

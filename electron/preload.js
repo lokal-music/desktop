@@ -1,6 +1,26 @@
 const { contextBridge, ipcRenderer } = require('electron')
 const invoke = (ch, ...a) => ipcRenderer.invoke(ch, ...a)
-const on = (ch, fn) => { ipcRenderer.on(ch, fn); return () => ipcRenderer.removeListener(ch, fn) }
+const channelListeners = new Map()
+const on = (ch, fn) => {
+  let entry = channelListeners.get(ch)
+  if (!entry) {
+    const listeners = new Set()
+    const dispatch = (event, ...args) => {
+      for (const listener of [...listeners]) listener(event, ...args)
+    }
+    entry = { listeners, dispatch }
+    channelListeners.set(ch, entry)
+    ipcRenderer.on(ch, dispatch)
+  }
+  entry.listeners.add(fn)
+  return () => {
+    entry.listeners.delete(fn)
+    if (entry.listeners.size === 0 && channelListeners.get(ch) === entry) {
+      channelListeners.delete(ch)
+      ipcRenderer.removeListener(ch, entry.dispatch)
+    }
+  }
+}
 
 // Transfer the worklet's port once; PCM then travels straight to the main
 // process without scheduling a callback on the window's JavaScript thread.
