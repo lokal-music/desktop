@@ -14,13 +14,22 @@ function privateAddress(address) {
   return value === '::' || value === '::1' || /^(fc|fd|fe[89ab])/.test(value)
 }
 function domainAllowed(host, domains) {
-  return domains.some(domain => domain.startsWith('*.') ? host.endsWith(domain.slice(1)) && host !== domain.slice(2) : host === domain.toLowerCase())
+  const target = String(host || '').toLowerCase()
+  if (!target) return false
+  return (domains || []).some(domain => {
+    if (domain === '*') return true
+    const lower = String(domain || '').toLowerCase()
+    return lower.startsWith('*.')
+      ? target.endsWith(lower.slice(1)) && target !== lower.slice(2)
+      : target === lower
+  })
 }
 function validateURL(raw, permissions) {
   const url = new URL(raw)
   const host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase()
   if (url.username || url.password || !domainAllowed(host, permissions.network || [])) throw new Error(`Network permission denied for ${host}`)
-  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && permissions.allowHttp)) throw new Error('This addon requires HTTPS')
+  const httpAllowed = permissions.allowHttp || (permissions.httpHosts || []).some(h => String(h).toLowerCase() === host)
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && httpAllowed)) throw new Error('This addon requires HTTPS')
   return url
 }
 class ExtensionNetwork {
@@ -31,8 +40,11 @@ class ExtensionNetwork {
     for (let hop = 0; hop <= 5; hop++) {
       signal?.throwIfAborted()
       const host = url.hostname.replace(/^\[|\]$/g, '')
+      const lowerHost = host.toLowerCase()
       const addresses = net.isIP(host) ? [{ address: host, family: net.isIP(host) }] : await dns.lookup(host, { all: true })
-      const explicitLocal = (this.permissions.network || []).some(d => d === host) && (host === 'localhost' || net.isIP(host) && privateAddress(host))
+      const explicitLocal =
+        (this.permissions.localHosts || []).some(h => String(h).toLowerCase() === lowerHost) ||
+        (this.permissions.network || []).some(d => String(d).toLowerCase() === lowerHost) && (lowerHost === 'localhost' || net.isIP(host) && privateAddress(host))
       if (!addresses.length || !explicitLocal && addresses.some(a => privateAddress(a.address))) throw new Error('Addon request resolved to a private address without explicit permission')
       const cookie = directMedia ? '' : this.cookies.getCookieStringSync(url.href)
       const requestHeaders = { 'User-Agent': `Lokal/${require('../../package.json').version}`, ...headers }

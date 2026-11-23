@@ -43,10 +43,46 @@ function validateManifest(manifest) {
     if(!match||!FEATURES[match[1]]||FEATURES[match[1]]<Number(match[2]))throw new Error(`Unsupported runtime feature: ${required}`)
   }
   const permissions=manifest.permissions
-  if(!permissions || !Array.isArray(permissions.network)||permissions.network.length>100||permissions.network.some(d=>typeof d!=='string'||!/^(?:\*\.)?[a-z0-9.-]+$/i.test(d)))throw new Error('Invalid addon network permissions')
+  if(!permissions || !Array.isArray(permissions.network)||permissions.network.length>100||permissions.network.some(d=>typeof d!=='string'||(d!=='*'&&!/^(?:\*\.)?[a-z0-9.-]+$/i.test(d))))throw new Error('Invalid addon network permissions')
   if(manifest.signedSession){validateURL(manifest.signedSession.baseUrl,permissions);if(!permissions.storage)throw new Error('Signed sessions require storage permission')}
   if((manifest.settings || []).length>100||(manifest.qualityOptions || []).length>30)throw new Error('Addon manifest is too large')
   return manifest
+}
+function parseConfiguredEndpoint(raw) {
+  const value = String(raw || '').trim()
+  if (!value) return null
+  const hasScheme = /^https?:\/\//i.test(value)
+  let url
+  try { url = new URL(hasScheme ? value : `https://${value}`) } catch { return null }
+  if ((url.protocol !== 'https:' && url.protocol !== 'http:') || url.username || url.password) return null
+  const host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase()
+  if (!host) return null
+  return { host, isHttp: hasScheme && url.protocol === 'http:' }
+}
+function effectivePermissions(addon, settingsValues = {}) {
+  const base = addon?.manifest?.permissions || { network: [] }
+  const network = [...(base.network || [])]
+  const hasWildcard = network.includes('*')
+  const localHosts = new Set(base.localHosts || [])
+  const httpHosts = new Set(base.httpHosts || [])
+  for (const field of addon?.manifest?.settings || []) {
+    if (!field?.key || field.secret || field.type === 'button' || field.type === 'boolean') continue
+    const rawValue = settingsValues[field.key]
+    if (typeof rawValue !== 'string' || !rawValue.trim()) continue
+    const grantsFromWildcard = hasWildcard && (/^https?:\/\//i.test(rawValue.trim()) || /(?:url|endpoint|host|server)/i.test(field.key))
+    if (!field.grantsNetwork && !grantsFromWildcard) continue
+    const parsed = parseConfiguredEndpoint(rawValue)
+    if (!parsed) continue
+    if (!network.includes(parsed.host)) network.push(parsed.host)
+    localHosts.add(parsed.host)
+    if (parsed.isHttp) httpHosts.add(parsed.host)
+  }
+  return {
+    ...base,
+    network,
+    ...(localHosts.size ? { localHosts: [...localHosts] } : {}),
+    ...(httpHosts.size ? { httpHosts: [...httpHosts] } : {}),
+  }
 }
 function readArchive(buffer) {
   if(buffer.length>32*1024*1024)throw new Error('Addon package exceeds 32 MB')
@@ -330,12 +366,14 @@ class PackageService {
     })
   }
   createRuntime(addon,code,{root,grants=[],onProgress,onTransfer,onByteProgress,signal,heapMb}={}) {
+    const settings=this.settings(addon)
+    const permissions=effectivePermissions(addon,settings)
     let network=this.networks.get(addon.key)
-    if(!network){network=new ExtensionNetwork(addon.manifest.permissions);this.restoreConnection(addon.key,network);this.networks.set(addon.key,network)}
+    if(!network){network=new ExtensionNetwork(permissions);this.restoreConnection(addon.key,network);this.networks.set(addon.key,network)}
     let session
     if(addon.manifest.signedSession){const scope=hash(JSON.stringify(addon.manifest.signedSession));session=this.sessions.get(scope);if(!session){session=new SignedSession(addon.manifest.signedSession,this.storage,network,addon.key);this.sessions.set(scope,session)}}
     const host=new ExtensionHost({addon,storage:this.storage,network,session,root:root || path.join(this.root,'data',addon.key,'files'),grants,tools:this.tools(),db:this.db,onProgress,onTransfer,onByteProgress,signal})
-    const runtime=new ExtensionRuntime(code,{permissions:addon.manifest.permissions,signedSession:addon.manifest.signedSession,settings:this.settings(addon),rawFfmpeg:addon.manifest.capabilities?.rawFfmpeg,heapMb},host)
+    const runtime=new ExtensionRuntime(code,{permissions,signedSession:addon.manifest.signedSession,settings,rawFfmpeg:addon.manifest.capabilities?.rawFfmpeg,heapMb},host)
     runtime.ready.catch(()=>{})
     return runtime
   }
@@ -696,4 +734,4 @@ class PackageService {
 const services=new WeakMap()
 function service(db,options){let instance=services.get(db);if(!instance){instance=new PackageService(db,options);services.set(db,instance)}return instance}
 function shutdown(db){services.get(db)?.shutdown()}
-module.exports={PackageService,service,shutdown,REGISTRY,COMPAT_VERSION,FEATURES,compareVersions,validateManifest,parseDeferredPreviewLink,readArchive,trackOf,keyOf}
+module.exports={PackageService,service,shutdown,REGISTRY,COMPAT_VERSION,FEATURES,compareVersions,validateManifest,effectivePermissions,parseDeferredPreviewLink,readArchive,trackOf,keyOf}

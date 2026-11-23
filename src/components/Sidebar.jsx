@@ -570,7 +570,7 @@ export default function Sidebar() {
                     onClick={() => setConfirmSignOut(false)}
                     className="flex-1 rounded-lg border border-border bg-card px-2 py-1.5 text-[11px] text-muted hover:text-white transition-colors"
                   >
-                    Cancel
+                    {t('Cancel')}
                   </button>
                 </div>
               </div>

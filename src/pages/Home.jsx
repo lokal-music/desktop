@@ -32,6 +32,8 @@ import UnfollowedArtists from '../components/UnfollowedArtists'
 import MadeForYou from '../components/MadeForYou'
 import DiscoveryShelfEditor from '../components/DiscoveryShelfEditor'
 import { DISCOVERY_SHELF_DEFAULTS, DISCOVERY_SHELF_TITLES, readShelfLayout, restoreShelfLayout, visibleShelfIds, writeShelfLayout } from '../discoveryShelfLayout.mjs'
+import LocalHomeSectionEditor from '../components/LocalHomeSectionEditor'
+import { readLocalHomeLayout, restoreLocalHomeLayout, visibleLocalHomeSectionIds, writeLocalHomeLayout } from '../localHomeLayout.mjs'
 import FlowPanel from '../components/FlowPanel'
 import { madeForYou } from '../madeForYou'
 import { personalizedHomeMessages } from '../homeGreeting.mjs'
@@ -397,6 +399,22 @@ function HomeContent({ user }) {
     try { writeShelfLayout(window.localStorage, uidKey, provider, safe) }
     catch { showToast(t('Could not save Discovery section preferences.')) }
   }
+  const [showLocalHomeEditor, setShowLocalHomeEditor] = useState(false)
+  const [localHomeLayout, setLocalHomeLayout] = useState(() => {
+    try { return readLocalHomeLayout(window.localStorage, uidKey) }
+    catch { return restoreLocalHomeLayout() }
+  })
+  useEffect(() => {
+    try { setLocalHomeLayout(readLocalHomeLayout(window.localStorage, uidKey)) }
+    catch { setLocalHomeLayout(restoreLocalHomeLayout()) }
+  }, [uidKey])
+  const changeLocalHomeLayout = next => {
+    const safe = restoreLocalHomeLayout(next)
+    setLocalHomeLayout(safe)
+    try { writeLocalHomeLayout(window.localStorage, uidKey, safe) }
+    catch { showToast(t('Could not save Home section preferences.')) }
+  }
+  const openLocalHomeMenu = event => openMenu(event, [{ label: 'Edit', icon: Pencil, onSelect: () => setShowLocalHomeEditor(true) }])
   const [saving, setSaving] = useState(null)
   const [localArtists, setLocalArtists] = useState([])
   const hiddenArtists = useDiscoveryArtists(s => s.hidden)
@@ -855,6 +873,56 @@ function HomeContent({ user }) {
   const selectedMixId = tab === 'home' && route.section?.startsWith('mix-')
     ? decodeURIComponent(route.section.slice(4)) : null
   const selectedMix = mixes.find(mix => String(mix.id) === selectedMixId)
+  const hasLocalHomeContent = picks.length > 0 || mixes.length > 0 || suggestions.length > 0 || recentTracks.length > 0
+  const visibleLocalSections = visibleLocalHomeSectionIds(localHomeLayout)
+  const renderLocalHomeSection = id => {
+    if (id === 'madeForYou') {
+      return picks.length > 0 ? (
+        <div key={id} data-local-home-section={id}>
+          <MadeForYou picks={picks}
+            onPlay={index => playQueue(pickTracks, index, madeForYouContext)}
+            onContextMenu={openPickMenu} />
+        </div>
+      ) : null
+    }
+    if (id === 'mixes') {
+      return mixes.length > 0 ? (
+        <section key={id} data-local-home-section={id}>
+          <div onContextMenu={openLocalHomeMenu} className="flex items-center gap-2 mb-4">
+            <Radio size={14} className="text-accent" />
+            <h2 className="text-xs font-display text-muted uppercase tracking-widest">{t("Your Mixes")}</h2>
+          </div>
+          <div className="grid grid-cols-2 @md:grid-cols-3 gap-3">
+            {mixes.slice(0, 6).map(mix => <MixCard key={mix.id} mix={mix} onClick={() => playQueue(mix.tracks, 0, localMixContext(mix))} onOpen={() => navigate(`/home/home/mix-${encodeURIComponent(mix.id)}`)} onSave={() => saveMix(mix)} saving={saving === `mix:${mix.id}`} onContextMenu={event => openMixMenu(event, mix)} />)}
+          </div>
+        </section>
+      ) : null
+    }
+    if (id === 'suggestions') {
+      return suggestions.length > 0 ? (
+        <section key={id} data-local-home-section={id}>
+          <div onContextMenu={openLocalHomeMenu} className="flex items-center gap-2 mb-4">
+            <Sparkles size={14} className="text-accent" />
+            <h2 className="text-xs font-display text-muted uppercase tracking-widest">{t("Suggested for You")}</h2>
+            <button onClick={() => saveList('suggestions', `Suggested for You - ${today()}`, suggestions, 'Suggested for you on Home')} disabled={!!saving} className="ml-auto inline-flex items-center gap-1 text-xs text-accent disabled:opacity-50"><ListPlus size={13} />{t("Save as playlist")}</button>
+          </div>
+          <TrackList tracks={suggestions.slice(0, 8)} reduceMotion />
+        </section>
+      ) : null
+    }
+    if (id === 'recent') {
+      return recentTracks.length > 0 ? (
+        <section key={id} data-local-home-section={id}>
+          <div onContextMenu={openLocalHomeMenu} className="flex items-center justify-between mb-4">
+            <h2 className="text-xs font-display text-muted uppercase tracking-widest">{t("Recently Added")}</h2>
+            <button onClick={() => playQueue(recentTracks, 0)} className="text-xs text-accent hover:text-accent/70">{t("Play All")}</button>
+          </div>
+          <TrackList tracks={recentTracks} reduceMotion />
+        </section>
+      ) : null
+    }
+    return null
+  }
   const localHome = selectedMix ? (
     <section className="space-y-5" data-local-mix-detail>
       <button type="button" onClick={() => navigate('/home/home')}
@@ -866,12 +934,16 @@ function HomeContent({ user }) {
       <PlaylistCollection key={selectedMixId} tracks={selectedMix.tracks} context={localMixContext(selectedMix)} />
     </section>
   ) : <>
-    {picks.length > 0 && <MadeForYou picks={picks}
-      onPlay={index => playQueue(pickTracks, index, madeForYouContext)}
-      onContextMenu={openPickMenu} />}
-    {mixes.length > 0 && <section><div className="flex items-center gap-2 mb-4"><Radio size={14} className="text-accent" /><h2 className="text-xs font-display text-muted uppercase tracking-widest">{t("Your Mixes")}</h2></div><div className="grid grid-cols-2 @md:grid-cols-3 gap-3">{mixes.slice(0, 6).map(mix => <MixCard key={mix.id} mix={mix} onClick={() => playQueue(mix.tracks, 0, localMixContext(mix))} onOpen={() => navigate(`/home/home/mix-${encodeURIComponent(mix.id)}`)} onSave={() => saveMix(mix)} saving={saving === `mix:${mix.id}`} onContextMenu={event => openMixMenu(event, mix)} />)}</div></section>}
-    {suggestions.length > 0 && <section><div className="flex items-center gap-2 mb-4"><Sparkles size={14} className="text-accent" /><h2 className="text-xs font-display text-muted uppercase tracking-widest">{t("Suggested for You")}</h2><button onClick={() => saveList('suggestions', `Suggested for You - ${today()}`, suggestions, 'Suggested for you on Home')} disabled={!!saving} className="ml-auto inline-flex items-center gap-1 text-xs text-accent disabled:opacity-50"><ListPlus size={13} />{t("Save as playlist")}</button></div><TrackList tracks={suggestions.slice(0, 8)} reduceMotion /></section>}
-    {recentTracks.length > 0 && <section><div className="flex items-center justify-between mb-4"><h2 className="text-xs font-display text-muted uppercase tracking-widest">{t("Recently Added")}</h2><button onClick={() => playQueue(recentTracks, 0)} className="text-xs text-accent hover:text-accent/70">{t("Play All")}</button></div><TrackList tracks={recentTracks} reduceMotion /></section>}
+    {visibleLocalSections.map(renderLocalHomeSection)}
+    {hasLocalHomeContent && visibleLocalSections.length === 0 && (
+      <div className="py-10 text-center space-y-3" data-local-home-empty>
+        <p className="text-sm text-muted">{t("All Local Home sections are hidden.")}</p>
+        <button type="button" onClick={() => setShowLocalHomeEditor(true)}
+          className="rounded-lg border border-border px-4 py-1.5 text-xs text-accent hover:border-accent/50 transition-colors">
+          {t("Edit Local Home sections")}
+        </button>
+      </div>
+    )}
     {loaded && !recentTracks.length && !suggestions.length && !mixes.length && <p className="py-10 text-center text-sm text-muted">{t("No local tracks yet. Pick your music folder in Library.")}</p>}
   </>
 
@@ -894,13 +966,14 @@ function HomeContent({ user }) {
   const homeMessages = showHomeGreeting
     ? personalizedHomeMessages(localHistory, { hour })
     : null
+  const homeHeaderMenu = tab === 'home' ? openLocalHomeMenu : tab === 'discovery' ? sectionProps.onEditCategory : undefined
 
   return <div className="p-6 space-y-7 w-full max-w-6xl mx-auto pb-10">
-    {showHomeGreeting && <div data-home-greeting>
+    {showHomeGreeting && <div data-home-greeting onContextMenu={homeHeaderMenu}>
       <h1 className="text-2xl font-display text-white">{t(homeMessages.headline)}</h1>
       <p className="text-sm text-muted mt-1">{t(homeMessages.subheader)}</p>
     </div>}
-    <div className="flex gap-1 p-0.5 bg-elevated rounded-lg border border-border w-fit">{[['home', 'Local'], ['discovery', 'Discovery'], ['flow', 'Flow'], ['releases', 'Releases'], ['history', 'History']].map(([id, label]) => <button key={id} onClick={() => goHome(id)} className={`px-4 py-1.5 text-xs font-display uppercase tracking-wider rounded transition-colors ${tab === id ? 'bg-accent text-base' : 'text-muted hover:text-white'}`}>{label}</button>)}</div>
+    <div className="flex gap-1 p-0.5 bg-elevated rounded-lg border border-border w-fit">{[['home', 'Local'], ['discovery', 'Discovery'], ['flow', 'Flow'], ['releases', 'Releases'], ['history', 'History']].map(([id, label]) => <button key={id} onClick={() => goHome(id)} onContextMenu={id === 'home' ? openLocalHomeMenu : id === 'discovery' ? sectionProps.onEditCategory : undefined} className={`px-4 py-1.5 text-xs font-display uppercase tracking-wider rounded transition-colors ${tab === id ? 'bg-accent text-base' : 'text-muted hover:text-white'}`}>{t(label)}</button>)}</div>
     <SectionSwap id={tab} className="space-y-10">
       {tab === 'history' ? <section>
         <SectionHeader icon={History} eyebrow={t("History")} title={t("Listen History")} count={localHistory.length} />
@@ -929,6 +1002,10 @@ function HomeContent({ user }) {
       layout={shelfLayouts[recommendationSource] || restoreShelfLayout(recommendationSource)}
       onChange={layout => changeShelfLayout(recommendationSource, layout)}
       onClose={() => setShowDiscoveryEditor(false)} />
+    <LocalHomeSectionEditor open={showLocalHomeEditor}
+      layout={localHomeLayout}
+      onChange={changeLocalHomeLayout}
+      onClose={() => setShowLocalHomeEditor(false)} />
     <ContextMenu menu={menu} />
   </div>
 }

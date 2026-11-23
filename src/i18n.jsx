@@ -1,10 +1,12 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { api } from './api'
+import { RU_TRANSLATIONS } from './i18n/ru'
 
 export const APP_LANGUAGES = [
   { code: 'en', name: 'English' }, { code: 'fr', name: 'Français' }, { code: 'de', name: 'Deutsch' },
   { code: 'es', name: 'Español' }, { code: 'it', name: 'Italiano' }, { code: 'pt-BR', name: 'Português (Brasil)' },
-  { code: 'nl', name: 'Nederlands' }, { code: 'pl', name: 'Polski' }, { code: 'sv', name: 'Svenska' },
+  { code: 'nl', name: 'Nederlands' }, { code: 'pl', name: 'Polski' }, { code: 'ru', name: 'Русский' },
+  { code: 'sv', name: 'Svenska' },
 ]
 const LOCALES = ['fr', 'de', 'es', 'it', 'pt-BR', 'nl', 'pl', 'sv']
 
@@ -2110,6 +2112,10 @@ const ROWS = Object.assign({
   "{n} folders": ["{n} dossiers","{n} Ordner","{n} carpetas","{n} cartelle","{n} pastas","{n} mappen","{n} folderów","{n} mappar"],
   "No tracks yet — add a music folder above.": ["Aucun morceau pour l’instant — ajoutez un dossier musical ci-dessus.","Noch keine Titel — füge oben einen Musikordner hinzu.","Todavía no hay canciones; añade una carpeta de música arriba.","Ancora nessun brano: aggiungi una cartella musicale qui sopra.","Ainda não há faixas — adicione uma pasta de músicas acima.","Nog geen nummers — voeg hierboven een muziekmap toe.","Brak utworów — dodaj powyżej folder muzyczny.","Inga låtar ännu — lägg till en musikmapp ovan."],
   "Choose at least one existing music folder": ["Choisissez au moins un dossier musical existant","Wähle mindestens einen vorhandenen Musikordner aus","Elige al menos una carpeta de música existente","Scegli almeno una cartella musicale esistente","Escolha pelo menos uma pasta de músicas existente","Kies ten minste één bestaande muziekmap","Wybierz co najmniej jeden istniejący folder muzyczny","Välj minst en befintlig musikmapp"],
+  "Edit Local Home sections": ["Modifier les sections de l’accueil local","Bereiche der lokalen Startseite bearbeiten","Editar secciones del inicio local","Modifica sezioni della Home locale","Editar seções do início local","Secties van lokale startpagina bewerken","Edytuj sekcje lokalnej strony głównej","Redigera sektioner på lokal startsida"],
+  "Choose sections to show and drag to reorder.": ["Choisissez les sections à afficher et faites-les glisser pour les réorganiser.","Wähle die angezeigten Bereiche und ziehe sie zum Neuordnen.","Elige las secciones que se mostrarán y arrastra para reordenar.","Scegli le sezioni da mostrare e trascinale per riordinarle.","Escolha as seções a exibir e arraste para reordenar.","Kies welke secties worden getoond en sleep om te herschikken.","Wybierz sekcje do wyświetlenia i przeciągnij, aby zmienić kolejność.","Välj vilka sektioner som ska visas och dra för att ändra ordning."],
+  "Could not save Home section preferences.": ["Impossible d’enregistrer les préférences des sections de l’accueil.","Startseiten-Bereichseinstellungen konnten nicht gespeichert werden.","No se pudieron guardar las preferencias de las secciones de Inicio.","Impossibile salvare le preferenze delle sezioni della Home.","Não foi possível salvar as preferências das seções do Início.","Instellingen voor startpaginasecties konden niet worden opgeslagen.","Nie udało się zapisać ustawień sekcji strony głównej.","Det gick inte att spara inställningarna för startsidans sektioner."],
+  "All Local Home sections are hidden.": ["Toutes les sections de l’accueil local sont masquées.","Alle Bereiche der lokalen Startseite sind ausgeblendet.","Todas las secciones del inicio local están ocultas.","Tutte le sezioni della Home locale sono nascoste.","Todas as seções do início local estão ocultas.","Alle secties van de lokale startpagina zijn verborgen.","Wszystkie sekcje lokalnej strony głównej są ukryte.","Alla sektioner på den lokala startsidan är dolda."],
   "Surface": ["Surface","Oberfläche","Superficie","Superficie","Superfície","Oppervlak","Powierzchnia","Yta"],
   "Mica": ["Mica","Mica","Mica","Mica","Mica","Mica","Mica","Mica"],
   "Acrylic": ["Acrylique","Acryl","Acrílico","Acrilico","Acrílico","Acryl","Akryl","Akryl"],
@@ -2120,6 +2126,24 @@ const ROWS = Object.assign({
 const TRANSLATIONS = Object.fromEntries(Object.entries(ROWS).map(([phrase, values]) => [
   phrase, Object.fromEntries(LOCALES.map((locale, index) => [locale, values[index]])),
 ]))
+for (const [phrase, translation] of Object.entries(RU_TRANSLATIONS)) {
+  if (!TRANSLATIONS[phrase]) TRANSLATIONS[phrase] = {}
+  TRANSLATIONS[phrase].ru = translation
+}
+
+const pluralRulesCache = new Map()
+function pluralIndex(language, count, formCount) {
+  if (formCount === 2) return count === 1 ? 0 : 1
+  if (formCount === 3) {
+    let rules = pluralRulesCache.get(language)
+    if (!rules && typeof Intl !== 'undefined' && Intl.PluralRules) {
+      try { rules = new Intl.PluralRules(language); pluralRulesCache.set(language, rules) } catch {}
+    }
+    const category = rules ? rules.select(count) : (count === 1 ? 'one' : 'many')
+    return category === 'one' ? 0 : category === 'few' ? 1 : 2
+  }
+  return 0
+}
 
 const LanguageContext = createContext({ language: 'en', setLanguage: async () => false, t: value => value })
 function readStoredLanguage() {
@@ -2170,10 +2194,10 @@ export function LanguageProvider({ children }) {
     if (typeof phrase !== 'string') return phrase
     const translated = language === 'en' ? phrase : (TRANSLATIONS[phrase]?.[language] || phrase)
     if (!values || typeof values !== 'object') return translated
-    // "{n} station|{n} stations": two forms, the first for one (`count`, else `n`).
+    // "{n} station|{n} stations" (or 3-form Slavic "one|few|many").
     const count = Number(values.count ?? values.n)
     const forms = translated.includes('|') && Number.isFinite(count) ? translated.split('|') : null
-    const chosen = forms && forms.length === 2 ? forms[count === 1 ? 0 : 1] : translated
+    const chosen = forms && (forms.length === 2 || forms.length === 3) ? forms[pluralIndex(language, count, forms.length)] : translated
     return chosen.replace(/\{([a-zA-Z0-9_]+)\}/g, (match, key) => Object.prototype.hasOwnProperty.call(values, key) ? String(values[key]) : match)
   }, [language])
 
