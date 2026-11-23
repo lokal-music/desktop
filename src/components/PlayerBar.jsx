@@ -17,7 +17,8 @@ import Waveform from './Waveform'
 import Spectrum from '../visualizers/Spectrum'
 import Waves from '../visualizers/Waves'
 import Lightning from '../visualizers/Lightning'
-import { useAppearanceFlag } from '../appearanceFlags'
+import { useAppearanceFlag, usePlayerBarSurface } from '../appearanceFlags'
+import { playerBarSurfacePresentation } from '../playerBarSurface.mjs'
 import Modal from './Modal'
 import AudioPipelineModal from './AudioPipelineModal'
 import EqualizerModal from './EqualizerModal'
@@ -56,7 +57,8 @@ function fmt(s) { return `${Math.floor((s||0)/60)}:${Math.floor((s||0)%60).toStr
 
 export default function PlayerBar() {
   const { t } = useTranslation()
-  const glass = useAppearanceFlag('glass_player_bar')
+  const surface = usePlayerBarSurface()
+  const surfacePresentation = playerBarSurfacePresentation(surface)
   const fullResolutionTags = useFullResolutionTags()
   const showWaveform = useAppearanceFlag('player_waveform')
   const [playerVisualizer, setPlayerVisualizer] = useState(() => peekSettings()?.player_visualizer || null)
@@ -333,14 +335,12 @@ export default function PlayerBar() {
 
   return (
     <>
-      {/* Glass (Settings > Appearance > Player Bar), like the downloads popup:
-          a card floating over the bottom of the pages, which scroll on
-          underneath it (App leaves --player-space for it). Off: the plain
-          strip below the pages. */}
-      <div data-player-bar onContextMenu={openTrackMenu} className={glass
-        ? 'absolute inset-x-3 bottom-3 z-30 h-20 rounded-2xl border border-white/10 flex items-center px-4 gap-4 shadow-[0_24px_60px_rgba(0,0,0,0.45)] backdrop-blur-lg backdrop-saturate-150'
-        : 'h-20 border-t border-border flex items-center px-4 gap-4 flex-shrink-0 z-10'}
-        style={glass ? { backgroundColor: 'rgba(var(--surface-rgb), 0.55)' } : { backgroundColor: 'rgba(var(--surface-rgb), 0.9)', backdropFilter: 'blur(12px)' }}>
+      {/* Surface (Settings > Appearance > Player Bar): Glass, Mica or Acrylic
+          float over the bottom of the pages, which scroll on underneath
+          (App leaves --player-space for it). Off: the plain strip below. */}
+      <div data-player-bar data-player-bar-surface={surfacePresentation.mode} onContextMenu={openTrackMenu}
+        className={surfacePresentation.className}
+        style={surfacePresentation.style}>
         <div className="flex items-center gap-3 w-[370px] max-[1360px]:w-[320px] min-w-0">
         <button onClick={toggleFullscreen} disabled={!currentTrack}
           className="relative w-12 h-12 rounded-md overflow-hidden flex-shrink-0 bg-elevated hover:ring-2 ring-accent/30 transition-all disabled:cursor-default">

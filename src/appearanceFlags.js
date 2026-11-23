@@ -53,9 +53,10 @@
 
 import { useEffect, useState } from 'react'
 import { api } from './api'
+import { PLAYER_BAR_SURFACES, resolvePlayerBarSurface } from './playerBarSurface.mjs'
 
 const KEYS = ['glass_player_bar', 'player_bar_floating', 'player_bar_gradient', 'player_waveform', 'side_panel_visualizer', 'taskbar_progress', 'home_cover_flow', 'home_greeting']
-const VALUE_KEYS = ['player_bar_gradient_strength', 'player_bar_gradient_speed', 'player_bar_glass_transparency', 'player_bar_shade_transparency', 'app_tabs', 'taskbar_title', 'volume_wheel_step', 'folder_transition', 'radio_buffer_sec', 'radio_config_page_url', 'folder_apps',
+const VALUE_KEYS = ['player_bar_surface', 'player_bar_gradient_strength', 'player_bar_gradient_speed', 'player_bar_glass_transparency', 'player_bar_shade_transparency', 'app_tabs', 'taskbar_title', 'volume_wheel_step', 'folder_transition', 'radio_buffer_sec', 'radio_config_page_url', 'folder_apps',
   'player_visualizer', 'player_spectrum_bars', 'player_spectrum_bar_width', 'player_spectrum_height', 'player_spectrum_strength', 'player_spectrum_opacity', 'player_spectrum_color', 'player_spectrum_radius',
   'player_center_spectrum_bars', 'player_center_spectrum_bar_width', 'player_center_spectrum_height', 'player_center_spectrum_strength', 'player_center_spectrum_opacity', 'player_center_spectrum_color', 'player_center_spectrum_radius',
   'side_lyrics_backdrop_strength', 'side_lyrics_offset',
@@ -71,7 +72,7 @@ const listeners = new Set()
 function apply(s) {
   raw = Object.fromEntries(VALUE_KEYS.map(key => [key, s[key]]))
   values = Object.fromEntries(KEYS.map(key => [key, s[key] !== '0']))
-  if (s.player_bar_floating == null || s.player_bar_floating === '') values.player_bar_floating = s.glass_player_bar !== '0'
+  if (s.player_bar_floating == null || s.player_bar_floating === '') values.player_bar_floating = resolvePlayerBarSurface(s) !== 'off'
 }
 
 function notify() { listeners.forEach(fn => fn()) }
@@ -148,4 +149,13 @@ export function useSidePanelVisualizer() {
   const on = useAppearanceFlag('side_panel_visualizer')
   const chosen = useAppearanceText('side_panel_visual')
   return SIDE_PANEL_VISUALIZERS.includes(chosen) ? chosen : on ? 'character' : 'off'
+}
+
+export { PLAYER_BAR_SURFACES }
+
+/** Which footer player surface is active: 'off', 'glass', 'mica', or 'acrylic'. */
+export function usePlayerBarSurface() {
+  const glass = useAppearanceFlag('glass_player_bar')
+  const chosen = useAppearanceText('player_bar_surface')
+  return resolvePlayerBarSurface(chosen, glass)
 }

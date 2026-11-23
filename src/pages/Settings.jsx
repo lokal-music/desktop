@@ -11,6 +11,8 @@ import ResetLocalPasswordModal from '../components/ResetLocalPasswordModal'
 import AppTabsSettings from '../components/AppTabsSettings'
 import { statePersistenceEnabled, setStatePersistenceEnabled, writeSavedRoute } from '../statePersistence.mjs'
 import { APP_LANGUAGES, useTranslation } from '../i18n'
+import { previewAppearanceValue } from '../appearanceFlags'
+import { PLAYER_BAR_SURFACE_OPTIONS, resolvePlayerBarSurface } from '../playerBarSurface.mjs'
 import TvModeSettings from '../tv/TvModeSettings'
 ﻿import React, { useEffect, useLayoutEffect, useState, useRef, createContext, useContext } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -2598,13 +2600,27 @@ activeCategory === 'data' ? usersTried
 
       {inCategory('appearance') && (
       <Section title={t("Player Bar")}>
-        <Row label={t("Glass")} desc={t("The player bar floats over the page, blurred. Turn off for a plain bar, which is lighter if playback stutters.")}>
-          <button
-            onClick={() => set('glass_player_bar', settings.glass_player_bar === '0' ? '1' : '0')}
-            className={`px-4 py-1.5 rounded-lg text-xs font-display uppercase tracking-wider border transition-colors ${settings.glass_player_bar !== '0' ? 'bg-accent/20 border-accent/50 text-accent' : 'border-border text-muted hover:text-white'}`}>
-            {settings.glass_player_bar !== '0' ? t('On') : t('Off')}
-          </button>
-        </Row>
+        {(() => {
+          const surface = resolvePlayerBarSurface(settings)
+          const selectSurface = mode => {
+            previewAppearanceValue('player_bar_surface', mode)
+            set('player_bar_surface', mode)
+            set('glass_player_bar', mode === 'off' ? '0' : '1')
+          }
+          return (
+            <Row label={t("Surface")} desc={t("Choose Glass, Mica, or Acrylic for a floating player bar, or Off for a plain docked bar if playback stutters.")}>
+              <div className="flex flex-wrap gap-1.5" role="group" aria-label={t("Player bar surface")}>
+                {PLAYER_BAR_SURFACE_OPTIONS.map(({ id, label }) => (
+                  <button key={id} type="button" aria-pressed={surface === id}
+                    onClick={() => selectSurface(id)}
+                    className={`px-3.5 py-1.5 rounded-lg text-xs font-display uppercase tracking-wider border transition-colors ${surface === id ? 'bg-accent/20 border-accent/50 text-accent' : 'border-border text-muted hover:text-white'}`}>
+                    {t(label)}
+                  </button>
+                ))}
+              </div>
+            </Row>
+          )
+        })()}
         <Row label={t("Visualization")} desc={t("Choose the audio-reactive graphic beside the player controls.")}>
           <select aria-label={t("Player bar visualization")} value={settings.player_visualizer || (settings.player_waveform === '0' ? 'off' : 'waveform')} onChange={e => set('player_visualizer', e.target.value)}
             className="bg-card border border-border rounded-lg px-2 py-1.5 text-xs text-white outline-none focus:border-accent/50">

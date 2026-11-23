@@ -98,7 +98,8 @@ import { useMusicVideoView } from './musicVideo'
 import { skipUnavailableRecommendation } from './recommendationPlayback'
 import { useTranslation } from './i18n'
 import { THEMES, applyTheme } from './theme'
-import { useAppearanceFlag } from './appearanceFlags'
+import { usePlayerBarSurface } from './appearanceFlags'
+import { isFloatingPlayerBarSurface } from './playerBarSurface.mjs'
 import { usePerformanceMode } from './performanceMode'
 import { isWindowHidden, onWindowVisibility } from './windowVisibility'
 import { startSpotifyLikesSync } from './spotifyLikes'
@@ -531,8 +532,9 @@ export default function App() {
     }).catch(() => toast.close(t('Backup restored. The music folder refresh failed.')))
   }, [t])
 
-  // The glass player bar floats over the pages, which keep room for it.
-  const glassPlayerBar = useAppearanceFlag('glass_player_bar')
+  // Glass, Mica and Acrylic float over the pages, which keep room for them.
+  const playerBarSurface = usePlayerBarSurface()
+  const glassPlayerBar = isFloatingPlayerBarSurface(playerBarSurface)
   const performanceMode = usePerformanceMode()
   useEffect(() => {
     document.documentElement.classList.toggle('performance-mode', performanceMode)
