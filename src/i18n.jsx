@@ -1,10 +1,12 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { api } from './api'
+import { RU_TRANSLATIONS } from './i18n/ru'
 
 export const APP_LANGUAGES = [
   { code: 'en', name: 'English' }, { code: 'fr', name: 'Français' }, { code: 'de', name: 'Deutsch' },
   { code: 'es', name: 'Español' }, { code: 'it', name: 'Italiano' }, { code: 'pt-BR', name: 'Português (Brasil)' },
-  { code: 'nl', name: 'Nederlands' }, { code: 'pl', name: 'Polski' }, { code: 'sv', name: 'Svenska' },
+  { code: 'nl', name: 'Nederlands' }, { code: 'pl', name: 'Polski' }, { code: 'ru', name: 'Русский' },
+  { code: 'sv', name: 'Svenska' },
 ]
 const LOCALES = ['fr', 'de', 'es', 'it', 'pt-BR', 'nl', 'pl', 'sv']
 
@@ -2115,6 +2117,24 @@ const ROWS = Object.assign({
 const TRANSLATIONS = Object.fromEntries(Object.entries(ROWS).map(([phrase, values]) => [
   phrase, Object.fromEntries(LOCALES.map((locale, index) => [locale, values[index]])),
 ]))
+for (const [phrase, translation] of Object.entries(RU_TRANSLATIONS)) {
+  if (!TRANSLATIONS[phrase]) TRANSLATIONS[phrase] = {}
+  TRANSLATIONS[phrase].ru = translation
+}
+
+const pluralRulesCache = new Map()
+function pluralIndex(language, count, formCount) {
+  if (formCount === 2) return count === 1 ? 0 : 1
+  if (formCount === 3) {
+    let rules = pluralRulesCache.get(language)
+    if (!rules && typeof Intl !== 'undefined' && Intl.PluralRules) {
+      try { rules = new Intl.PluralRules(language); pluralRulesCache.set(language, rules) } catch {}
+    }
+    const category = rules ? rules.select(count) : (count === 1 ? 'one' : 'many')
+    return category === 'one' ? 0 : category === 'few' ? 1 : 2
+  }
+  return 0
+}
 
 const LanguageContext = createContext({ language: 'en', setLanguage: async () => false, t: value => value })
 function readStoredLanguage() {
@@ -2165,10 +2185,10 @@ export function LanguageProvider({ children }) {
     if (typeof phrase !== 'string') return phrase
     const translated = language === 'en' ? phrase : (TRANSLATIONS[phrase]?.[language] || phrase)
     if (!values || typeof values !== 'object') return translated
-    // "{n} station|{n} stations": two forms, the first for one (`count`, else `n`).
+    // "{n} station|{n} stations" (or 3-form Slavic "one|few|many").
     const count = Number(values.count ?? values.n)
     const forms = translated.includes('|') && Number.isFinite(count) ? translated.split('|') : null
-    const chosen = forms && forms.length === 2 ? forms[count === 1 ? 0 : 1] : translated
+    const chosen = forms && (forms.length === 2 || forms.length === 3) ? forms[pluralIndex(language, count, forms.length)] : translated
     return chosen.replace(/\{([a-zA-Z0-9_]+)\}/g, (match, key) => Object.prototype.hasOwnProperty.call(values, key) ? String(values[key]) : match)
   }, [language])
 
