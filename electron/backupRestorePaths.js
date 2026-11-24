@@ -391,7 +391,12 @@ async function prepareRestore(payload, current, selection, {
       const found = await resolveExistingFile(candidate, { caseInsensitive })
       if (!found) continue
       const identity = key(found)
-      if (!identity || key(file) === identity || originals.has(identity)) continue
+      if (!identity) continue
+      // The first existing candidate may be the track's already-valid path.
+      // Stop here instead of falling through to a different phone-folder copy.
+      if (identity === key(file)) return null
+      // Another track already owns this destination; try the next candidate.
+      if (originals.has(identity)) continue
       return found
     }
     return null
