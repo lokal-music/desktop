@@ -86,7 +86,7 @@ test('Jellyfin addon installs and connects to a user-configured local server whi
     var cfg = {};
     registerExtension({
       initialize(s) { cfg = s || {}; },
-      handleUrl() { return { tracks: [] }; },
+      handleURL() { return { tracks: [] }; },
       download() { return { success: false, error: 'not used' }; },
       testConnection() {
         var r = http.get(cfg.server_url + '/System/Info/Public');
@@ -100,6 +100,8 @@ test('Jellyfin addon installs and connects to a user-configured local server whi
 
   const installed = await service.install({ buffer: buildArchive(jellyfinManifest, code) })
   assert.equal(installed.id, 'jellyfin')
+  const runtime = await service.runtime(installed.key)
+  assert.deepEqual(await runtime.invoke('handleUrl'), { tracks: [] }, 'legacy handleURL registration remains callable through handleUrl')
 
   service.setSettings(installed.key, {
     server_url: `http://127.0.0.1:${port}`,
@@ -110,7 +112,6 @@ test('Jellyfin addon installs and connects to a user-configured local server whi
   assert.equal(ping.ok, true)
   assert.deepEqual(JSON.parse(ping.body), { ok: true, path: '/System/Info/Public' })
 
-  const runtime = await service.runtime(installed.key)
   const blocked = await runtime.invoke('probeOtherPrivate')
   assert.equal(blocked.ok, false)
   assert.match(blocked.error, /private address without explicit permission/i)
