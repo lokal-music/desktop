@@ -247,9 +247,56 @@ test('relocates separate Lokal Mobile, legacy phone-downloads, unmapped nested r
   )
 
   assert.deepEqual(restored.library, { relocated: 3, unmatched: 0 })
-  assert.deepEqual(
-    restored.data.tracks.map(track => track.file_path),
-    [separateTrack, legacyTrack, casedTrack],
+  assert.equal(restored.data.tracks[0].file_path, separateTrack)
+  assert.equal(restored.data.tracks[1].file_path, legacyTrack)
+  // On case-insensitive filesystems the returned spelling may differ while
+  // still resolving to the exact same file. Compare canonical file identity.
+  assert.equal(
+    await fs.realpath(restored.data.tracks[2].file_path),
+    await fs.realpath(casedTrack),
   )
+})
+
+test('keeps an existing Lokal Mobile track instead of falling back to a duplicate Lokal Phone copy', async t => {
+  const { music, storageDir, readable } = await fixture(t)
+  const mobileDir = path.join(music, 'Lokal Mobile')
+  const phoneDir = path.join(music, 'Lokal Phone')
+  const originalTrack = path.join(mobileDir, 'Song.flac')
+  const duplicateTrack = path.join(phoneDir, 'Song.flac')
+  await fs.mkdir(mobileDir, { recursive: true })
+  await fs.mkdir(phoneDir, { recursive: true })
+  await Promise.all([
+    fs.writeFile(originalTrack, 'the original mobile file'),
+    fs.writeFile(duplicateTrack, 'a different phone-folder copy'),
+  ])
+
+  const payload = {
+    settings: {
+      music_folder: music,
+      music_folders: JSON.stringify([music]),
+      phone_download_root: mobileDir,
+    },
+    tracks: [{
+      id: 'mobile-original',
+      file_path: originalTrack,
+      download_source: 'mobile',
+    }],
+  }
+  const current = {
+    music_folder: music,
+    music_folders: JSON.stringify([music]),
+    phone_download_root: mobileDir,
+  }
+
+  const restored = await prepareRestore(
+    payload,
+    current,
+    null,
+    { storageDir, readable },
+  )
+
+  assert.deepEqual(restored.library, { relocated: 0, unmatched: 0 })
+  assert.equal(restored.data.tracks[0].file_path, originalTrack)
+  assert.equal(await fs.readFile(restored.data.tracks[0].file_path, 'utf8'), 'the original mobile file')
 })
 
