@@ -3557,7 +3557,7 @@ activeCategory === 'data' ? usersTried
                   ))}
                 </div>
               )}
-              {importPreview.data?.settings?.phone_download_root && (
+              {api.isElectron && importPreview.data?.settings?.phone_download_root && (
                 <div className="space-y-2 border-t border-border pt-3">
                   <div className="flex items-center justify-between gap-3">
                     <div className="min-w-0">
