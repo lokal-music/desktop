@@ -357,3 +357,47 @@ test('UpnpDiscovery finds Sonos via mDNS _sonos._tcp.local (even when SSDP gets 
   discovery.stop()
   assert.equal(mdns.destroyed, 1)
 })
+
+test('UpnpController reports a Linux firewall error when Sonos never fetches from the media server, and clears it once a request arrives', async t => {
+  const f = fixture()
+  let requestCount = 0
+  const media = {
+    prepare: async track => ({
+      trackId: String(track.id),
+      url: `http://192.168.1.4:3422/token/key/${track.id}.flac`,
+      duration: 180,
+      mime: 'audio/flac',
+      metadata: { title: `Song ${track.id}`, artist: 'Artist', albumName: 'Album', images: [] },
+    }),
+    release: () => {},
+  }
+  const server = {
+    start: async () => 3422,
+    stop: () => {},
+    get port() { return 3422 },
+    get requestCount() { return requestCount },
+  }
+  const controller = new UpnpController({
+    media,
+    server,
+    fetchImpl: f.fetchImpl,
+    reachabilityTimeoutMs: 60,
+    platform: 'linux',
+  })
+  t.after(() => controller.cleanup())
+  await controller.connect(device(true))
+  f.setState('TRANSITIONING')
+  await controller.setWindow({ current: { id: 'a', title: 'Test Song' }, upcoming: [], play: true })
+  const end = Date.now() + 1000
+  while (Date.now() < end && !/TCP port 3422/.test(controller.status().error || '')) {
+    await new Promise(resolve => setTimeout(resolve, 15))
+  }
+  assert.match(controller.status().error || '', /TCP port 3422/)
+  assert.match(controller.status().error || '', /firewall/i)
+  requestCount = 1
+  f.setUri('http://192.168.1.4:3422/token/key/a.flac')
+  f.setState('PLAYING')
+  await controller.poll()
+  assert.equal(controller.status().error, null)
+})
+

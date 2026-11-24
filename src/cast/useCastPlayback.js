@@ -231,6 +231,12 @@ export function useCastPlayback(helpers) {
 
     const onStatus = status => {
       if (!live || status?.state !== 'connected') return
+      if (status.error && status.error !== live.lastError) {
+        live.lastError = status.error
+        showToast(status.error)
+      } else if (!status.error) {
+        live.lastError = null
+      }
       const state = player()
       if (status.volume && Date.now() - live.volumeAt > VOLUME_SETTLE_MS && Math.abs(Number(status.volume.level) - state.volume) > 0.001) {
         usePlayerStore.setState({ volume: Number(status.volume.level) })
@@ -296,7 +302,9 @@ export function useCastPlayback(helpers) {
       if (!live) return
       const state = player()
       if (String(info?.trackId) !== String(state.currentTrack?.id)) return
-      showToast(`Couldn't play "${state.currentTrack?.title || 'this song'}" on ${live.device?.name || 'the TV'}${info?.message ? `: ${info.message}` : ''}`)
+      if (!info?.message || info.message !== live.lastError) {
+        showToast(`Couldn't play "${state.currentTrack?.title || 'this song'}" on ${live.device?.name || 'the TV'}${info?.message ? `: ${info.message}` : ''}`)
+      }
       const before = state.currentTrack
       state.autoNext()
       if (player().currentTrack === before) usePlayerStore.setState({ isPlaying: false })

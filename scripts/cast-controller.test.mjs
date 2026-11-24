@@ -335,3 +335,44 @@ test('CastController passes the connected socket localAddress and reports a Linu
   await controller.play()
   assert.equal(controller.status().error, null)
 })
+
+test('CastController still reports the firewall error if the receiver stays IDLE after LOAD with no media server hits', async t => {
+  const device = await startFakeReceiver()
+  t.after(() => device.close())
+  device.state.loadPlayerState = 'IDLE'
+  let requestCount = 0
+  const server = {
+    start: async () => 3422,
+    stop: () => {},
+    get port() { return 3422 },
+    get requestCount() { return requestCount },
+  }
+  const media = {
+    prepare: async (item, { localAddress }) => ({
+      trackId: String(item.id),
+      url: `http://${localAddress || '127.0.0.1'}:3422/token/key/${item.id}.flac`,
+      mime: 'audio/flac',
+      duration: 180,
+      metadata: { metadataType: 3, title: item.title },
+      keys: [],
+    }),
+    release: () => {},
+  }
+  const controller = new CastController({
+    media,
+    server,
+    connect: device.connect,
+    reachabilityTimeoutMs: 60,
+    platform: 'linux',
+  })
+  t.after(() => controller.disconnect({ stopReceiver: false }))
+  await controller.connect(tv(device))
+  await controller.setWindow({ current: track('a'), upcoming: [], position: 0, play: true, repeat: 'none' })
+  await until(() => /TCP port 3422/.test(controller.status().error || ''))
+  assert.match(controller.status().error, /firewall/i)
+  // Once the receiver hits the local media server, a subsequent status clears the warning.
+  requestCount = 1
+  controller.onMediaStatus([{ playerState: 'BUFFERING' }])
+  assert.equal(controller.status().error, null)
+})
+

@@ -157,12 +157,20 @@ function createCastMedia({
     const ref = streamRef(row)
     if (ref) {
       if (forceConvert || receiver === 'sonos') {
-        const stream = await resolveStream(ref.provider, ref.id)
+        let stream = await resolveStream(ref.provider, ref.id)
+        if (stream?.type === 'live' && stream.job?.promise) {
+          await stream.job.promise
+          if (stream.job.status !== 'done' || !stream.job.result) {
+            throw new Error(stream.job.error || 'Audio preparation cancelled')
+          }
+          stream = stream.job.result
+        }
         const plan = { action: 'convert', to: 'flac', ext: '.flac', mime: 'audio/flac', rate: receiver === 'sonos' ? 48000 : null, depth: receiver === 'sonos' ? 16 : 24 }
         // Lossy sources stay lossy: AAC is plenty for what YouTube or SoundCloud send.
         if (!/flac|wav|alac/i.test(String(stream.mime || ''))) Object.assign(plan, { to: 'aac', ext: '.m4a', mime: 'audio/mp4', depth: null })
         const dest = cachePath(`${ref.provider}:${ref.id}`, plan)
         const source = stream.file || stream.url
+        if (!source) throw new Error('This online song has no convertible audio stream')
         await convertOnce(dest, convertArgs(source, dest, plan, { headers: stream.file ? null : stream.headers }))
         use(dest)
         files.push(dest)

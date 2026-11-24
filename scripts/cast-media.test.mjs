@@ -258,3 +258,41 @@ test('converted songs the TV still holds are kept when the cache is trimmed', as
   await media.prepare({ id: 'b' }, { deviceHost: '127.0.0.1' })
   assert.ok(!trims.at(-1).includes(first.files[0]), 'released: no longer kept')
 })
+
+test('Sonos awaits live online stream jobs before conversion and media server logs incoming requests', async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lokal-cast-live-'))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  const downloaded = path.join(dir, 'live.flac')
+  fs.writeFileSync(downloaded, 'flac-audio')
+  const logs = []
+  const server = createCastMediaServer({ log: line => logs.push(line) })
+  await server.start()
+  t.after(() => server.stop())
+
+  let convertedFrom = null
+  const job = { status: 'running', result: null, promise: null }
+  job.promise = new Promise(resolve => setTimeout(() => {
+    job.status = 'done'
+    job.result = { file: downloaded, mime: 'audio/flac' }
+    resolve()
+  }, 20))
+
+  const media = createCastMedia({
+    server,
+    cacheDir: () => path.join(dir, 'cache'),
+    streamRef: row => ({ provider: 'tidal', id: row.id }),
+    resolveStream: async () => ({ type: 'live', job }),
+    convert: async (_ffmpeg, args) => {
+      convertedFrom = args[args.indexOf('-i') + 1]
+      fs.writeFileSync(args.at(-1), 'converted-flac')
+    },
+  })
+
+  const prepared = await media.prepare({ id: 'online-live', title: 'Online Track' }, { deviceHost: '127.0.0.1', receiver: 'sonos' })
+  assert.equal(convertedFrom, downloaded)
+  const response = await fetch(prepared.url)
+  assert.equal(response.status, 200)
+  assert.ok(logs.some(line => /media server GET file from 127\.0\.0\.1/.test(line)))
+  media.release(prepared)
+})
+

@@ -3,16 +3,23 @@ const { coordinator, soap, speakerArtwork, AV, RC, GROUP_RC, seconds, timestamp 
 const { didl, value, parseXml, nodes } = require('./upnpXml')
 const { routeAddressFor } = require('./mediaServer')
 
+const MEDIA_REACH_TIMEOUT_MS = 12000
+
 // Owns network I/O, queue preparation and clock polling in Electron's main
 // process. Minimizing the renderer never parks the receiver's queue worker.
 class UpnpController extends EventEmitter {
-  constructor({ media, server, fetchImpl = fetch, log = () => {} }) {
+  constructor({ media, server, fetchImpl = fetch, log = () => {}, reachabilityTimeoutMs = MEDIA_REACH_TIMEOUT_MS, platform = process.platform }) {
     super(); this.media = media; this.server = server; this.fetch = fetchImpl; this.log = log
+    this.reachabilityTimeoutMs = reachabilityTimeoutMs
+    this.platform = platform
     this.state = 'idle'; this.entries = []; this.prepared = new Map(); this.revision = 0; this.epoch = 0; this.serial = Promise.resolve()
     this.position = 0; this.playerState = 'IDLE'; this.volume = { level: 1, muted: false }
     this.controls = 0
     this.sonosQueueId = 0
     this.localAddress = null
+    this.reachabilityTimer = null
+    this.reachabilityError = null
+    this.reachabilityHitsBefore = null
   }
   status() {
     return { state: this.state, device: this.device, receiver: this.device?.sonos ? 'sonos' : 'dlna', trackId: this.current?.trackId || null,
@@ -28,11 +35,45 @@ class UpnpController extends EventEmitter {
       { InstanceID: 0, ...(group ? {} : { Channel: 'Master' }), ...args }, this.fetch)
   }
   enqueue(work) { const next = this.serial.then(work); this.serial = next.catch(() => {}); return next }
+  unreachableMediaMessage(url) {
+    const name = this.device?.name || 'The speaker'
+    let target = this.server?.port ? `port ${this.server.port}` : 'this computer'
+    try { if (url) target = new URL(url).host } catch {}
+    return this.platform === 'linux' && this.server?.port
+      ? `${name} couldn't reach this computer at ${target}. Check your firewall (allow TCP port ${this.server.port}).`
+      : `${name} couldn't reach this computer at ${target}. Check your firewall or network settings.`
+  }
+  clearReachabilityWatch() {
+    clearTimeout(this.reachabilityTimer)
+    this.reachabilityTimer = null
+    this.reachabilityHitsBefore = null
+  }
+  watchMediaReachability(preparedUrl, hitsBefore) {
+    this.clearReachabilityWatch()
+    if (typeof hitsBefore !== 'number' || !this.server?.port) return
+    let targetPort = 0
+    try { targetPort = Number(new URL(preparedUrl).port) } catch {}
+    if (targetPort !== this.server.port) return
+    const epoch = this.epoch
+    this.reachabilityHitsBefore = hitsBefore
+    this.reachabilityTimer = setTimeout(() => {
+      this.reachabilityTimer = null
+      if (epoch !== this.epoch || this.state !== 'connected') return
+      if (this.server.requestCount > hitsBefore) return
+      const message = this.unreachableMediaMessage(preparedUrl)
+      this.log(`cast: ${message}`)
+      this.reachabilityError = message
+      this.error = message
+      this.publish()
+    }, this.reachabilityTimeoutMs)
+    this.reachabilityTimer.unref?.()
+  }
   async connect(device) {
     this.device = await coordinator(device, this.fetch)
     await this.server.start()
     const controlPort = (() => { try { return Number(new URL(this.device.services.AVTransport.url).port) || 80 } catch { return 1400 } })()
     this.localAddress = this.fetch === fetch ? await routeAddressFor(this.device.host, controlPort).catch(() => null) : null
+    this.log(`cast: ${this.device.sonos ? 'sonos' : 'dlna'} connected to ${this.device.name} (${this.device.host})${this.localAddress ? ` via ${this.localAddress}` : ''}`)
     this.state = 'connected'; this.epoch++; this.error = null
     try { await this.readVolume() } catch {}
     this.pollTimer = setInterval(() => { if (!this.polling && !this.syncing) this.poll().catch(error => this.failedPoll(error)) }, 1500)
@@ -65,6 +106,7 @@ class UpnpController extends EventEmitter {
       this.syncing = true
       try { await this.apply(window, revision) }
       catch (error) {
+        this.log(`cast: ${this.device?.sonos ? 'sonos' : 'dlna'} error: ${error.message}`)
         if (revision === this.revision) { this.error = error.message; this.publish(); this.emit('trackError', { trackId: window.current.id, message: error.message }) }
         throw error
       }
@@ -84,6 +126,13 @@ class UpnpController extends EventEmitter {
     if (!fresh()) return
     const changed = !this.current || this.current.trackId !== item.trackId || want.reload
     if (changed) {
+      if (this.reachabilityError && this.error === this.reachabilityError) this.error = null
+      this.reachabilityError = null
+      const hitsBefore = typeof this.server?.requestCount === 'number' ? this.server.requestCount : null
+      try {
+        const origin = item.url ? new URL(item.url).origin : 'unknown'
+        this.log(`cast: loading "${want.current.title || item.trackId}" on ${this.device?.name || 'speaker'} from ${origin}`)
+      } catch {}
       const held = !want.reload && this.entries.findIndex(e => e.url === item.url)
       if (this.device.sonos && held !== false && held >= 0 && this.queueOwned) {
         await this.av('Seek', { Unit: 'TRACK_NR', Target: held + 1 })
@@ -103,7 +152,10 @@ class UpnpController extends EventEmitter {
       if (!fresh()) return
       this.current = item; this.position = Number(want.position) || 0; this.positionAt = Date.now()
       if (this.position > 0) await this.av('Seek', { Unit: 'REL_TIME', Target: timestamp(this.position) })
-      if (want.play !== false) await this.av('Play', { Speed: 1 })
+      if (want.play !== false) {
+        await this.av('Play', { Speed: 1 })
+        this.watchMediaReachability(item.url, hitsBefore)
+      }
       this.playerState = want.play === false ? 'PAUSED' : 'PLAYING'
       this.finishedFor = null; this.publish()
     }
@@ -145,7 +197,8 @@ class UpnpController extends EventEmitter {
     this.repeat = repeat
     const retained = new Set(this.entries.map(e => e.trackId))
     for (const [id, prepared] of this.prepared) if (!retained.has(id) && id !== item.trackId) { this.media.release(prepared); this.prepared.delete(id) }
-    this.error = null; this.publish()
+    if (!this.reachabilityError || this.error !== this.reachabilityError) this.error = null
+    this.publish()
   }
   async add(item) {
     // The same recording can appear twice. Sonos expects a distinct DIDL ID
@@ -237,6 +290,17 @@ class UpnpController extends EventEmitter {
       if (item) this.current = item
       this.position = seconds(value(position, 'RelTime')); this.positionAt = Date.now()
       this.playerState = state === 'PLAYING' ? 'PLAYING' : state === 'TRANSITIONING' ? 'BUFFERING' : state === 'PAUSED_PLAYBACK' ? 'PAUSED' : 'IDLE'
+      if (this.playerState !== previous) {
+        this.log(`cast: ${this.device?.name || 'speaker'} state ${this.playerState} (${state || 'UNKNOWN'})`)
+      }
+      const serverHit = typeof this.reachabilityHitsBefore === 'number' && this.server?.requestCount > this.reachabilityHitsBefore
+      if (serverHit || (this.playerState === 'PLAYING' && this.position > 0)) {
+        this.clearReachabilityWatch()
+        if (this.reachabilityError && this.error === this.reachabilityError) {
+          this.error = null
+          this.reachabilityError = null
+        }
+      }
       await this.readVolume().catch(() => {})
       if (epoch !== this.epoch || revision !== this.revision || controls !== this.controls) return
       this.publish()
@@ -277,7 +341,7 @@ class UpnpController extends EventEmitter {
     this.cleanup(); this.state = 'idle'; this.publish(); return last
   }
   end(reason) { const last = this.status(); this.cleanup(); this.state = 'idle'; this.publish(); this.emit('ended', { reason, last }) }
-  cleanup() { this.epoch++; this.revision++; clearInterval(this.pollTimer); this.current = null; this.deferredWindow = null; this.entries = []; for (const p of this.prepared.values()) this.media.release(p); this.prepared.clear(); this.server.stop(); this.device = null }
+  cleanup() { this.epoch++; this.revision++; this.clearReachabilityWatch(); this.reachabilityError = null; clearInterval(this.pollTimer); this.current = null; this.deferredWindow = null; this.entries = []; for (const p of this.prepared.values()) this.media.release(p); this.prepared.clear(); this.server.stop(); this.device = null }
   sendCustom() { return false }
   sendUpNext() { return false }
   sendVideo() { return false }

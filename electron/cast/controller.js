@@ -85,6 +85,7 @@ class CastController extends EventEmitter {
     this.state = 'idle'
     this.error = null
     this.reachabilityError = null
+    this.reachabilityHitsBefore = null
     clearTimeout(this.reachabilityTimer)
     this.reachabilityTimer = null
     clearInterval(this.poll)
@@ -242,6 +243,7 @@ class CastController extends EventEmitter {
   teardown() {
     clearTimeout(this.reachabilityTimer)
     this.reachabilityTimer = null
+    this.reachabilityHitsBefore = null
     this.reachabilityError = null
     clearInterval(this.poll)
     for (const key of this.upNextKeys || []) this.media.unpublish?.(key)
@@ -306,12 +308,19 @@ class CastController extends EventEmitter {
       if (item) item.trackId = String(status.media.customData.trackId)
     }
     if (status.media?.duration) this.duration = status.media.duration
+    const previousState = this.playerState
+    const previousReason = this.idleReason
     if (status.playerState) this.playerState = status.playerState
     this.idleReason = status.playerState === 'IDLE' ? status.idleReason || null : null
-    if (this.playerState && this.playerState !== 'BUFFERING') {
+    if (this.playerState !== previousState || this.idleReason !== previousReason) {
+      this.log(`cast: ${this.device?.name || 'receiver'} state ${this.playerState}${this.idleReason ? ` (${this.idleReason})` : ''}`)
+    }
+    const serverHit = typeof this.reachabilityHitsBefore === 'number' && this.server?.requestCount > this.reachabilityHitsBefore
+    if (this.playerState === 'PLAYING' || this.playerState === 'PAUSED' || serverHit) {
       clearTimeout(this.reachabilityTimer)
       this.reachabilityTimer = null
-      if (this.playerState === 'PLAYING' && this.reachabilityError && this.error === this.reachabilityError) {
+      this.reachabilityHitsBefore = null
+      if ((this.playerState === 'PLAYING' || serverHit) && this.reachabilityError && this.error === this.reachabilityError) {
         this.error = null
         this.reachabilityError = null
       }
@@ -426,6 +435,11 @@ class CastController extends EventEmitter {
     return prepared
   }
 
+  isServerUrl(url) {
+    if (!url || !this.server?.port) return false
+    try { return Number(new URL(url).port) === this.server.port } catch { return false }
+  }
+
   unreachableMediaMessage(url) {
     const name = this.device?.name || 'The Cast device'
     let target = this.server?.port ? `port ${this.server.port}` : 'this computer'
@@ -438,15 +452,14 @@ class CastController extends EventEmitter {
   watchMediaReachability(preparedUrl, hitsBefore) {
     clearTimeout(this.reachabilityTimer)
     this.reachabilityTimer = null
-    if (typeof hitsBefore !== 'number' || !this.server?.port) return
-    let targetPort = 0
-    try { targetPort = Number(new URL(preparedUrl).port) } catch {}
-    if (targetPort !== this.server.port) return
+    this.reachabilityHitsBefore = null
+    if (typeof hitsBefore !== 'number' || !this.isServerUrl(preparedUrl)) return
     const session = this.session
+    this.reachabilityHitsBefore = hitsBefore
     this.reachabilityTimer = setTimeout(() => {
       this.reachabilityTimer = null
       if (session !== this.session || this.state !== 'connected') return
-      if (this.playerState !== 'BUFFERING' && !this.loading) return
+      if (this.playerState === 'PLAYING' || this.playerState === 'PAUSED') return
       if (this.server.requestCount > hitsBefore) return
       const message = this.unreachableMediaMessage(preparedUrl)
       this.log(`cast: ${message}`)
@@ -524,7 +537,8 @@ class CastController extends EventEmitter {
           this.loading = false
           clearTimeout(this.reachabilityTimer)
           this.reachabilityTimer = null
-          if (typeof hitsBefore === 'number' && this.server?.port && this.server.requestCount === hitsBefore && /No answer to LOAD/i.test(String(error?.message || ''))) {
+          this.reachabilityHitsBefore = null
+          if (typeof hitsBefore === 'number' && this.isServerUrl(prepared.url) && this.server.requestCount === hitsBefore && /No answer to LOAD/i.test(String(error?.message || ''))) {
             throw new Error(this.unreachableMediaMessage(prepared.url))
           }
           throw error
@@ -533,6 +547,10 @@ class CastController extends EventEmitter {
         if (reply.type === 'LOAD_FAILED' || reply.type === 'LOAD_CANCELLED' || reply.type === 'INVALID_REQUEST') {
           clearTimeout(this.reachabilityTimer)
           this.reachabilityTimer = null
+          this.reachabilityHitsBefore = null
+          if (reply.type === 'LOAD_FAILED' && typeof hitsBefore === 'number' && this.isServerUrl(prepared.url) && this.server.requestCount === hitsBefore) {
+            throw new Error(this.unreachableMediaMessage(prepared.url))
+          }
           throw new Error(`The TV couldn't load "${want.current.title || 'this song'}"`)
         }
         this.onMediaStatus(reply.status)

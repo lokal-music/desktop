@@ -210,13 +210,18 @@ function createCastMediaServer({ log = () => {}, port: preferredPort = 0 } = {})
   }
 
   async function handle(req, res) {
+    const peer = normalizeIPv4(req.socket?.remoteAddress) || req.socket?.remoteAddress || 'unknown'
     const found = String(req.url || '').match(/^\/([0-9a-f]{32})\/([0-9a-f]{24})(?:\/[^?]*)?(?:\?.*)?$/)
     if (!found || found[1] !== token) { res.writeHead(404); res.end(); return }
     requestCount++
     if (req.method === 'OPTIONS') { res.writeHead(204, CORS); res.end(); return }
     if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405, CORS); res.end(); return }
     const item = items.get(found[2])
-    if (!item) { res.writeHead(404, CORS); res.end(); return }
+    if (!item) { log(`cast: media server 404 ${req.method} from ${peer}`); res.writeHead(404, CORS); res.end(); return }
+    if (!item.loggedHit) {
+      item.loggedHit = true
+      log(`cast: media server ${req.method} ${item.kind} from ${peer}`)
+    }
     if (item.kind === 'file') return serveFile(req, res, item)
     if (item.kind === 'artwork') return serveArtwork(req, res, item)
     if (item.kind === 'relay') return serveRelay(req, res, item)
