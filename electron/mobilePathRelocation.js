@@ -17,7 +17,7 @@ function relativeInside(filePath, root) {
   if (!fileApi || !rootApi || fileApi !== rootApi) return null
   const relative = fileApi.relative(fileApi.resolve(root), fileApi.resolve(filePath))
   if (!relative || relative === '..' || relative.startsWith('..' + fileApi.sep) || fileApi.isAbsolute(relative)) return null
-  return relative.split(fileApi.sep).join('/')
+  return relative
 }
 
 // A restored backup may already have replaced phone_download_root with the
@@ -32,13 +32,13 @@ function relativeFromFolderMarker(filePath, destinationRoot) {
   const parts = filePath.split(/[\\/]+/)
   const index = parts.findIndex(part => part.toLocaleLowerCase() === marker)
   if (index < 0 || index === parts.length - 1) return null
-  return parts.slice(index + 1).join('/')
+  return parts.slice(index + 1).join(fileApi.sep)
 }
 
 function destinationPath(root, relative) {
   const api = pathApi(root)
   if (!api || !relative) return null
-  return api.join(root, ...relative.split('/'))
+  return api.join(root, ...relative.split(/[\\/]+/))
 }
 
 function rebaseMobileTrackPaths(database, previousRoot, destinationRoot) {
