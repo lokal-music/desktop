@@ -4,6 +4,7 @@ const fs = require('fs')
 const path = require('path')
 const os = require('os')
 const { getDB, getStorageDir } = require('./ipc/db')
+const { rebaseMobileTrackPaths } = require('./mobilePathRelocation')
 
 const KEYS = Object.freeze({ downloads: 'download_root', cache: 'cache_root', phone: 'phone_download_root' })
 
@@ -53,7 +54,7 @@ function downloadDirectory(settings = {}, explicitOutputDir = '') {
 }
 
 // Paired-phone originals follow the same user-selected download drive,
- // never the private application database directory.
+// never the private application database directory.
 function phoneCopyDirectory(settings = {}) {
   return path.join(downloadDirectory(settings), 'Lokal Phone')
 }
@@ -110,8 +111,15 @@ function saveRoot(kind, selected) {
   const root = selected ? validateWritableDirectory(selected) : ''
   const database = getDB()
   if (!database) throw new Error('The music library has not loaded yet.')
+  const previousPhoneRoot = kind === 'phone' ? savedRoot('phone') : ''
   const device = root ? String(fs.statSync(root).dev) : ''
   database.transaction(() => {
+    // Updating the setting alone leaves restored mobile tracks pointing at
+    // the old PC's absolute paths. Rebase paths in the same transaction as
+    // the setting so the Library selector repairs an already-restored backup.
+    if (kind === 'phone' && root) {
+      rebaseMobileTrackPaths(database, previousPhoneRoot, root)
+    }
     database.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(key, root)
     database.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(key + '_device', device)
   })()

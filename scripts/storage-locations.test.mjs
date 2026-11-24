@@ -26,6 +26,7 @@ vm.runInNewContext(script, {
   module: mod,
   require(id) {
     if (id === './ipc/db') return { getDB: () => db, getStorageDir: () => path.join(root, 'data') }
+    if (id === './mobilePathRelocation') return { rebaseMobileTrackPaths: () => ({ tracks: 0, artwork: 0 }) }
     if (id === 'fs') return fs
     if (id === 'path') return path
     if (id === 'os') return os
@@ -124,6 +125,7 @@ test('phone-upload folder uses validated native selection and cannot be set thro
   assert.match(read('server/linkUpload.js'), /phoneDownloadDirectory\(\)/)
   assert.match(read('electron/ipc/cache.js'), /phone: storage\.savedRoot\('phone'\)/)
   assert.match(read('src/pages/Settings.jsx'), /Incoming phone files/)
+  assert.match(read('electron/storageLocations.js'), /rebaseMobileTrackPaths\(database, previousPhoneRoot, root\)/)
   assert.match(read('server/routes/settings.js'), /phone_download_root/)
   assert.match(read('electron/ipc/scanner.js'), /phone_download_root/)
 })
