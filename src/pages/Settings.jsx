@@ -1073,7 +1073,7 @@ export default function Settings() {
       const folder = await api.openFolder()
       if (!folder) return
       setImportPreview(current => current?.library
-        ? { ...current, library: { ...current.library, phoneRoot: folder } }
+        ? { ...current, library: { ...current.library, phoneRoot: folder, phoneRootSelected: true } }
         : current)
     } catch (error) {
       alert(t('Could not select a mobile folder: {error}', { error: t(error.message) }))
@@ -1111,7 +1111,7 @@ export default function Settings() {
       const result = await api.importAllData(importPreview.data, library && {
         primary: library.primary,
         mappings: library.mappings.map(entry => entry.folder),
-        ...(library.phoneRoot ? { phoneRoot: library.phoneRoot } : {}),
+        ...(library.phoneRootSelected ? { phoneRoot: library.phoneRoot } : {}),
       })
       if (!result || result.error) throw new Error(t(result?.error || 'Import failed'))
       // A failed pre-import settings save must not retry over the restored DB.
