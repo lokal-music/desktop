@@ -1900,7 +1900,10 @@ function registerScannerHandlers(ipcMain) {
       const { isReadableRoot, withTimeout } = require('./networkLibrary')
       const current = currentSettings()
       const prepared = await prepareRestore(payload, current, selection, {
-        storageDir: getStorageDir(), readable: isReadableRoot, stat: withTimeout(fsp.stat),
+        storageDir: getStorageDir(),
+        readable: isReadableRoot,
+        stat: withTimeout(fsp.stat),
+        readdir: withTimeout(fsp.readdir),
       })
 
       const watcher = require('../libraryWatcher')
