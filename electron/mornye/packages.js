@@ -349,7 +349,7 @@ class PackageService {
         runtime=this.createRuntime(candidate,code,{root:path.join(staged,'validation-data')})
         await runtime.ready
         if(manifest.type.includes('download_provider')&&!runtime.methods.includes('download'))throw new Error('Download provider has no registered download() method')
-        if((manifest.urlHandler?.enabled||!manifest.type.includes('download_provider'))&&!runtime.methods.includes('handleUrl'))throw new Error('Playlist-link addon has no registered handleUrl() method')
+        if((manifest.urlHandler?.enabled||!manifest.type.includes('download_provider'))&&!runtime.methods.some(method=>method==='handleUrl'||method==='handleURL'))throw new Error('Playlist-link addon has no registered handleUrl() method')
         const methods=runtime.methods
         runtime.close();runtime=null
         await fsp.rm(path.join(staged,'validation-data'),{recursive:true,force:true})
