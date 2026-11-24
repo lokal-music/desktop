@@ -285,6 +285,7 @@ test('maps a separate Lokal Mobile destination independently from the main music
 
   assert.equal(restored.data.settings.music_folder, music)
   assert.equal(restored.data.settings.phone_download_root, mobileRoot)
+  assert.equal(restored.data.settings.phone_download_root_device, String((await fs.stat(mobileRoot)).dev))
   assert.equal(restored.data.tracks[0].file_path, mobileTrack)
   assert.equal(restored.data.tracks[1].file_path, mainTrack)
   assert.deepEqual(restored.library, { relocated: 2, unmatched: 0 })
