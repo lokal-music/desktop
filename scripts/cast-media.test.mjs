@@ -42,14 +42,52 @@ test('this computer\'s address on the TV\'s network, and ranges', () => {
   const interfaces = {
     lo: [{ address: '127.0.0.1', family: 'IPv4', internal: true, netmask: '255.0.0.0' }],
     vpn: [{ address: '10.8.0.2', family: 'IPv4', internal: false, netmask: '255.255.255.0' }],
-    wifi: [{ address: '192.168.1.23', family: 'IPv4', internal: false, netmask: '255.255.255.0' }],
+    docker0: [{ address: '172.17.0.1', family: 'IPv4', internal: false, netmask: '255.255.0.0' }],
+    virbr0: [{ address: '192.168.122.1', family: 'IPv4', internal: false, netmask: '255.255.255.0' }],
+    tailscale0: [{ address: '100.64.1.2', family: 'IPv4', internal: false, netmask: '255.192.0.0' }],
+    wlo1: [{ address: '192.168.1.23', family: 'IPv4', internal: false, netmask: '255.255.255.0' }],
   }
   assert.equal(localAddressFor('192.168.1.40', interfaces), '192.168.1.23')
-  assert.equal(localAddressFor('172.20.0.9', interfaces), '10.8.0.2')
+  // Different subnet: prefer physical LAN (wlo1) over VPN/Docker/libvirt/Tailscale.
+  assert.equal(localAddressFor('172.20.0.9', interfaces), '192.168.1.23')
+  // Device actually on the VPN subnet: explicit fallback subnet match still works.
+  assert.equal(localAddressFor('10.8.0.50', interfaces), '10.8.0.2')
+  // Longest-prefix subnet match beats a broader mask on another LAN interface.
+  assert.equal(localAddressFor('10.0.1.40', {
+    eth0: [{ address: '10.0.0.5', family: 'IPv4', internal: false, netmask: '255.0.0.0' }],
+    enp3s0: [{ address: '10.0.1.5', family: 'IPv4', internal: false, netmask: '255.255.255.0' }],
+  }), '10.0.1.5')
   assert.deepEqual(parseRange('bytes=100-', 1000), { start: 100, end: 999 })
   assert.deepEqual(parseRange('bytes=-100', 1000), { start: 900, end: 999 })
   assert.equal(parseRange('bytes=2000-', 1000), 'bad')
   assert.equal(parseRange(null, 1000), null)
+})
+
+test('media server supports explicit socket localAddress, PNA CORS preflight, requestCount, and preferred port fallback', async t => {
+  const first = createCastMediaServer()
+  const port = await first.start()
+  t.after(() => first.stop())
+  const added = first.add({ kind: 'json', data: { ok: true } }, 'info.json')
+  assert.equal(first.urlFor(added.path, '192.168.1.40', '::ffff:192.168.1.99'), `http://192.168.1.99:${port}${added.path}`)
+  assert.equal(first.requestCount, 0)
+  const preflight = await fetch(`http://127.0.0.1:${port}${added.path}`, { method: 'OPTIONS' })
+  assert.equal(preflight.status, 204)
+  assert.equal(preflight.headers.get('access-control-allow-private-network'), 'true')
+  assert.match(preflight.headers.get('access-control-allow-methods') || '', /GET/)
+  assert.equal(first.requestCount, 1)
+
+  // Preferred port busy -> falls back cleanly to an ephemeral port.
+  const second = createCastMediaServer({ port })
+  const fallbackPort = await second.start()
+  t.after(() => second.stop())
+  assert.ok(fallbackPort > 0 && fallbackPort !== port)
+
+  // Preferred port free -> binds that exact port.
+  first.stop()
+  const third = createCastMediaServer({ port })
+  const reusedPort = await third.start()
+  t.after(() => third.stop())
+  assert.equal(reusedPort, port)
 })
 
 test('the TV fetches a song (and seeks in it), only by its token and key; online songs are relayed', async t => {

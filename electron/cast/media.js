@@ -101,10 +101,10 @@ function createCastMedia({
     return null
   }
 
-  function artworkFor(source, deviceHost) {
+  function artworkFor(source, deviceHost, localAddress = null) {
     if (source?.file) {
       const added = server.add({ kind: 'artwork', path: source.file }, 'cover.jpg')
-      return { url: server.urlFor(added.path, deviceHost), key: added.key }
+      return { url: server.urlFor(added.path, deviceHost, localAddress), key: added.key }
     }
     return { url: source?.url || null, key: null }
   }
@@ -141,7 +141,7 @@ function createCastMedia({
    * @param options { deviceHost, convert: true to convert even what could be relayed (a retry) }
    * @returns { trackId, url, mime, duration, metadata, keys, converted }
    */
-  async function prepare(track, { deviceHost, convert: forceConvert = false, receiver = 'chromecast' } = {}) {
+  async function prepare(track, { deviceHost, localAddress = null, convert: forceConvert = false, receiver = 'chromecast' } = {}) {
     const libraryTrack = trackRow(track?.id) || {}
     const row = { ...libraryTrack, ...track }
     if (!row?.id) throw new Error('Nothing to play')
@@ -178,7 +178,7 @@ function createCastMedia({
           fetchRange: async (range, signal) => (await fetchStream(ref.provider, ref.id, { range, signal })).res,
         }, 'song')
         keys.push(added.key)
-        url = server.urlFor(added.path, deviceHost)
+        url = server.urlFor(added.path, deviceHost, localAddress)
       }
     } else {
       const file = String(row.file_path || '')
@@ -220,9 +220,9 @@ function createCastMedia({
         'song' + path.extname(playbackFile).toLowerCase(),
       )
       keys.push(added.key)
-      url = server.urlFor(added.path, deviceHost)
+      url = server.urlFor(added.path, deviceHost, localAddress)
     }
-    const art = artworkFor(cover, deviceHost)
+    const art = artworkFor(cover, deviceHost, localAddress)
     if (art.key) keys.push(art.key)
     return {
       trackId: String(row.id),
@@ -254,8 +254,8 @@ function createCastMedia({
   }
 
   /** A song's cover for Lokal's receiver (its Up Next row): { url, key } (key: to take it down). */
-  function artwork(track, { deviceHost } = {}) {
-    return artworkFor(artworkSource(track || {}, trackRow(track?.id) || {}), deviceHost)
+  function artwork(track, { deviceHost, localAddress = null } = {}) {
+    return artworkFor(artworkSource(track || {}, trackRow(track?.id) || {}), deviceHost, localAddress)
   }
 
   return { prepare, release, artwork, unpublish: key => { if (key) server.remove(key) } }

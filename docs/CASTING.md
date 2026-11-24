@@ -131,10 +131,14 @@ The rules:
   computer. Some routers keep devices apart ("AP isolation", "client
   isolation", guest networks); a VPN can too. Add the TV by its IP address
   (Google TV: Settings → Network & Internet → your Wi-Fi network).
-- **The TV connects but nothing plays**: the TV fetches songs from this
-  computer. On Windows, allow Lokal on **private networks** when the
-  firewall asks (or in Windows Security → Firewall → Allow an app). The
-  network must be set as private, not public.
+- **The TV or speaker connects but nothing plays (cover/song keeps loading)**:
+  the Cast device fetches songs and covers over HTTP from this computer (port
+  `3422` by default, or `CAST_PORT`). On Windows, allow Lokal on **private
+  networks** when the firewall asks (or in Windows Security → Firewall → Allow
+  an app); the network must be set as private, not public. On Linux, allow
+  incoming TCP port `3422` in your firewall (for example,
+  `sudo ufw allow 3422/tcp` or
+  `sudo firewall-cmd --permanent --add-port=3422/tcp && sudo firewall-cmd --reload`).
 - **A song is skipped with "Couldn't play"**: the TV refused it even after
   converting it, or an online song couldn't be fetched (e.g. one that is
   DRM-protected on SoundCloud).

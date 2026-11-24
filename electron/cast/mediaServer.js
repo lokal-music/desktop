@@ -9,38 +9,99 @@
 // work for this computer, so the TV gets the bytes from here.
 
 const crypto = require('crypto')
+const dgram = require('dgram')
 const fs = require('fs')
 const http = require('http')
+const { isIPv4 } = require('net')
 const os = require('os')
+const { lanInterfaces } = require('../network/lanInterfaces')
 
 const CORS = {
   'access-control-allow-origin': '*',
+  'access-control-allow-methods': 'GET, HEAD, OPTIONS',
   'access-control-allow-headers': 'range, content-type',
   'access-control-expose-headers': 'content-range, content-length, accept-ranges',
+  'access-control-allow-private-network': 'true',
+}
+
+function normalizeIPv4(address) {
+  if (typeof address !== 'string') return null
+  const ip = address.trim().replace(/^::ffff:/i, '')
+  return isIPv4(ip) && ip !== '0.0.0.0' ? ip : null
 }
 
 /**
- * This computer's address on the TV's network: an interface in the same
- * subnet as the device, else the first private IPv4 one.
+ * This computer's address on the TV's network: a physical LAN interface in the
+ * same subnet (most specific netmask first), else the highest-ranked LAN IPv4
+ * interface, avoiding Docker/VM/VPN adapters whenever a real LAN exists.
  */
 function localAddressFor(deviceHost, interfaces = os.networkInterfaces()) {
-  const candidates = []
+  if (/^127\./.test(String(deviceHost || ''))) return '127.0.0.1' // a device on this computer (a test receiver)
+  const preferred = lanInterfaces(interfaces)
+  const fallback = []
   for (const list of Object.values(interfaces || {})) {
     for (const item of list || []) {
-      if (item && !item.internal && (item.family === 'IPv4' || item.family === 4)) candidates.push(item)
+      if (item && !item.internal && (item.family === 'IPv4' || item.family === 4) && isIPv4(item.address || '')) fallback.push(item)
     }
   }
   const toInt = ip => String(ip).split('.').reduce((n, part) => (n * 256) + (Number(part) & 255), 0) >>> 0
-  if (/^127\./.test(String(deviceHost || ''))) return '127.0.0.1' // a device on this computer (a test receiver)
-  if (deviceHost) {
+  const bestSubnetMatch = list => {
+    if (!isIPv4(String(deviceHost || ''))) return null
     const device = toInt(deviceHost)
-    for (const item of candidates) {
+    let best = null
+    let bestMask = -1
+    for (const item of list) {
       const mask = toInt(item.netmask || '255.255.255.0')
-      if (((toInt(item.address) & mask) >>> 0) === ((device & mask) >>> 0)) return item.address
+      if (((toInt(item.address) & mask) >>> 0) === ((device & mask) >>> 0) && mask > bestMask) {
+        best = item.address
+        bestMask = mask
+      }
     }
+    return best
   }
+  const match = bestSubnetMatch(preferred) || bestSubnetMatch(fallback)
+  if (match) return match
   const privateRange = /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/
-  return (candidates.find(item => privateRange.test(item.address)) || candidates[0])?.address || '127.0.0.1'
+  return (preferred.find(item => privateRange.test(item.address)) || preferred[0]
+    || fallback.find(item => privateRange.test(item.address)) || fallback[0])?.address || '127.0.0.1'
+}
+
+/**
+ * Asks the OS routing table which local IPv4 address reaches `deviceHost`
+ * without transmitting any packets (UDP connect is a pure local route lookup).
+ */
+function routeAddressFor(deviceHost, port = 1400) {
+  const host = normalizeIPv4(deviceHost)
+  if (!host) return Promise.resolve(null)
+  if (/^127\./.test(host)) return Promise.resolve('127.0.0.1')
+  return new Promise(resolve => {
+    let socket
+    let done = false
+    const finish = value => {
+      if (done) return
+      done = true
+      try { socket?.close() } catch {}
+      resolve(value)
+    }
+    try {
+      socket = dgram.createSocket('udp4')
+      socket.once('error', () => finish(null))
+      socket.connect(Number(port) || 1400, host, () => {
+        try { finish(normalizeIPv4(socket.address()?.address)) } catch { finish(null) }
+      })
+    } catch {
+      finish(null)
+    }
+  })
+}
+
+function detectImageMime(bytes) {
+  if (!Buffer.isBuffer(bytes) || bytes.length < 12) return null
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg'
+  if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return 'image/png'
+  if (bytes.subarray(0, 4).toString('ascii') === 'RIFF' && bytes.subarray(8, 12).toString('ascii') === 'WEBP') return 'image/webp'
+  if (bytes.subarray(0, 4).toString('ascii') === 'GIF8') return 'image/gif'
+  return null
 }
 
 /** "bytes=a-b" for a file of `size` bytes: { start, end } or null (whole file), or 'bad'. */
@@ -55,10 +116,11 @@ function parseRange(header, size) {
   return { start, end }
 }
 
-function createCastMediaServer({ log = () => {} } = {}) {
+function createCastMediaServer({ log = () => {}, port: preferredPort = 0 } = {}) {
   let server = null
   let port = 0
   let token = null
+  let requestCount = 0
   const items = new Map() // key -> { kind: 'file'|'artwork'|'relay'|'json', ... }
 
   async function serveFile(req, res, item) {
@@ -125,23 +187,32 @@ function createCastMediaServer({ log = () => {} } = {}) {
   async function serveArtwork(req, res, item) {
     // The desktop library caches WebP thumbnails. Serve a JPEG that older
     // receivers can display, and share the conversion across HEAD and GET.
-    item.jpeg ??= fs.promises.readFile(item.path)
-      .then(bytes => require('../fileArtwork').normalizeArtwork(bytes))
+    item.image ??= fs.promises.readFile(item.path)
+      .then(async bytes => {
+        try {
+          const jpeg = await require('../fileArtwork').normalizeArtwork(bytes)
+          return { body: jpeg, mime: 'image/jpeg' }
+        } catch {
+          const mime = detectImageMime(bytes)
+          return mime ? { body: bytes, mime } : null
+        }
+      })
       .catch(() => null)
-    const body = await item.jpeg
-    if (!body) { res.writeHead(404, CORS); res.end(); return }
+    const image = await item.image
+    if (!image) { res.writeHead(404, CORS); res.end(); return }
     res.writeHead(200, {
       ...CORS,
-      'content-type': 'image/jpeg',
-      'content-length': String(body.length),
+      'content-type': image.mime,
+      'content-length': String(image.body.length),
       'cache-control': 'no-store',
     })
-    res.end(req.method === 'HEAD' ? undefined : body)
+    res.end(req.method === 'HEAD' ? undefined : image.body)
   }
 
   async function handle(req, res) {
     const found = String(req.url || '').match(/^\/([0-9a-f]{32})\/([0-9a-f]{24})(?:\/[^?]*)?(?:\?.*)?$/)
     if (!found || found[1] !== token) { res.writeHead(404); res.end(); return }
+    requestCount++
     if (req.method === 'OPTIONS') { res.writeHead(204, CORS); res.end(); return }
     if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405, CORS); res.end(); return }
     const item = items.get(found[2])
@@ -158,15 +229,44 @@ function createCastMediaServer({ log = () => {} } = {}) {
     res.writeHead(404, CORS); res.end()
   }
 
-  /** Starts listening (once per casting session) on every interface; a new token each time. */
-  function start() {
-    if (server) return Promise.resolve(port)
-    token = crypto.randomBytes(16).toString('hex')
-    server = http.createServer((req, res) => { handle(req, res).catch(error => { log(`media server: ${error?.message || error}`); try { res.destroy() } catch {} }) })
+  function listenOn(instance, listenPort) {
     return new Promise((resolve, reject) => {
-      server.once('error', error => { server = null; reject(error) })
-      server.listen(0, '0.0.0.0', () => { port = server.address().port; resolve(port) })
+      const onError = error => { instance.off('listening', onListening); reject(error) }
+      const onListening = () => { instance.off('error', onError); resolve(instance.address().port) }
+      instance.once('error', onError)
+      instance.once('listening', onListening)
+      instance.listen(listenPort, '0.0.0.0')
     })
+  }
+
+  /** Starts listening (once per casting session) on every interface; a new token each time. */
+  async function start() {
+    if (server) return port
+    token = crypto.randomBytes(16).toString('hex')
+    requestCount = 0
+    const instance = http.createServer((req, res) => { handle(req, res).catch(error => { log(`media server: ${error?.message || error}`); try { res.destroy() } catch {} }) })
+    server = instance
+    const desired = Number.isInteger(preferredPort) && preferredPort > 0 ? preferredPort : 0
+    try {
+      port = await listenOn(instance, desired)
+    } catch (error) {
+      if (desired > 0 && (error?.code === 'EADDRINUSE' || error?.code === 'EACCES')) {
+        log(`cast: media server port ${desired} unavailable (${error.code}); falling back to an ephemeral port`)
+        try {
+          port = await listenOn(instance, 0)
+        } catch (fallbackError) {
+          server = null
+          token = null
+          throw fallbackError
+        }
+      } else {
+        server = null
+        token = null
+        throw error
+      }
+    }
+    log(`cast: media server listening on port ${port}`)
+    return port
   }
 
   /** Puts something up for the TV; returns its address path ("/<token>/<key>/<name>"). */
@@ -180,6 +280,7 @@ function createCastMediaServer({ log = () => {} } = {}) {
 
   function stop() {
     items.clear()
+    requestCount = 0
     if (!server) return
     try { server.closeAllConnections?.() } catch {}
     server.close()
@@ -189,12 +290,16 @@ function createCastMediaServer({ log = () => {} } = {}) {
 
   return {
     start, stop, add, remove,
-    /** The full address of a path for a device at `deviceHost`. */
-    urlFor: (pathPart, deviceHost) => `http://${localAddressFor(deviceHost)}:${port}${pathPart}`,
+    /** The full address of a path for a device at `deviceHost` (preferring an explicit socket `localAddress`). */
+    urlFor: (pathPart, deviceHost, localAddress = null) => {
+      const host = normalizeIPv4(localAddress) || localAddressFor(deviceHost)
+      return `http://${host}:${port}${pathPart}`
+    },
     get running() { return !!server },
     get port() { return port },
     get size() { return items.size },
+    get requestCount() { return requestCount },
   }
 }
 
-module.exports = { createCastMediaServer, localAddressFor, parseRange }
+module.exports = { createCastMediaServer, localAddressFor, routeAddressFor, parseRange }

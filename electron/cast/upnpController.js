@@ -1,6 +1,7 @@
 const { EventEmitter } = require('events')
 const { coordinator, soap, speakerArtwork, AV, RC, GROUP_RC, seconds, timestamp } = require('./upnp')
 const { didl, value, parseXml, nodes } = require('./upnpXml')
+const { routeAddressFor } = require('./mediaServer')
 
 // Owns network I/O, queue preparation and clock polling in Electron's main
 // process. Minimizing the renderer never parks the receiver's queue worker.
@@ -11,6 +12,7 @@ class UpnpController extends EventEmitter {
     this.position = 0; this.playerState = 'IDLE'; this.volume = { level: 1, muted: false }
     this.controls = 0
     this.sonosQueueId = 0
+    this.localAddress = null
   }
   status() {
     return { state: this.state, device: this.device, receiver: this.device?.sonos ? 'sonos' : 'dlna', trackId: this.current?.trackId || null,
@@ -29,6 +31,8 @@ class UpnpController extends EventEmitter {
   async connect(device) {
     this.device = await coordinator(device, this.fetch)
     await this.server.start()
+    const controlPort = (() => { try { return Number(new URL(this.device.services.AVTransport.url).port) || 80 } catch { return 1400 } })()
+    this.localAddress = this.fetch === fetch ? await routeAddressFor(this.device.host, controlPort).catch(() => null) : null
     this.state = 'connected'; this.epoch++; this.error = null
     try { await this.readVolume() } catch {}
     this.pollTimer = setInterval(() => { if (!this.polling && !this.syncing) this.poll().catch(error => this.failedPoll(error)) }, 1500)
@@ -39,7 +43,7 @@ class UpnpController extends EventEmitter {
     if (this.prepared.has(id)) return this.prepared.get(id)
     const epoch = this.epoch
     let expired = false; let timer
-    const work = this.media.prepare(track, { deviceHost: this.device.host, receiver: this.device.sonos ? 'sonos' : 'dlna' })
+    const work = this.media.prepare(track, { deviceHost: this.device.host, localAddress: this.localAddress, receiver: this.device.sonos ? 'sonos' : 'dlna' })
       .then(item => { if (expired) this.media.release(item); return item })
     let item
     try {

@@ -33,15 +33,20 @@ test('Wi-Fi and Ethernet outrank unknown interfaces; bad, duplicate and virtual 
     'Ethernet 2': [{ ...ipv4('10.8.0.2'), netmask: '255.255.255.255' }],
     'Ethernet 3': [ipv4('198.18.0.1')],
     en0: [{ ...ipv4('192.168.2.20'), family: 4 }],
+    wlo1: [ipv4('192.168.3.20')],
     utun3: [ipv4('10.3.1.1')],
     wg0: [ipv4('10.4.1.1')],
     'br-deadbeef': [ipv4('172.20.0.1')],
     vethabcd1234: [ipv4('172.21.0.1')],
+    podman0: [ipv4('10.88.0.1')],
+    waydroid0: [ipv4('192.168.240.1')],
+    lxcbr0: [ipv4('10.0.3.1')],
+    cni0: [ipv4('10.244.0.1')],
     lo: [{ ...ipv4('127.0.0.1'), internal: true }],
     invalid: ['0.0.0.0', '127.0.0.2', '169.254.3.4', '224.0.0.251', '255.255.255.255', 'bad'].map(ipv4),
     ipv6: [{ address: 'fe80::1', family: 'IPv6', internal: false }],
   })
-  assert.deepEqual(values.map(value => value.address), ['192.168.1.20', '192.168.2.20', '10.1.1.2'])
+  assert.deepEqual(values.map(value => value.address), ['192.168.1.20', '192.168.2.20', '192.168.3.20', '10.1.1.2'])
   assert.equal(values[0].name, 'Wi-Fi')
 })
 

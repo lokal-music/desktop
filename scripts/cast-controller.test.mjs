@@ -291,3 +291,47 @@ test('a queue the TV keeps refusing is given up on after a few tries; the song p
   assert.equal(controller.applied, controller.generation)
   assert.equal(device.state.media.playerState, 'PLAYING')
 })
+
+test('CastController passes the connected socket localAddress and reports a Linux firewall error when the receiver never fetches media', async t => {
+  const device = await startFakeReceiver()
+  t.after(() => device.close())
+  device.state.loadPlayerState = 'BUFFERING'
+  const seenLocalAddresses = []
+  let requestCount = 0
+  const server = {
+    start: async () => 3422,
+    stop: () => {},
+    get port() { return 3422 },
+    get requestCount() { return requestCount },
+  }
+  const media = {
+    prepare: async (item, { localAddress }) => {
+      seenLocalAddresses.push(localAddress)
+      return {
+        trackId: String(item.id),
+        url: `http://${localAddress || '127.0.0.1'}:3422/token/key/${item.id}.flac`,
+        mime: 'audio/flac',
+        duration: 180,
+        metadata: { metadataType: 3, title: item.title },
+        keys: [],
+      }
+    },
+    release: () => {},
+  }
+  const controller = new CastController({
+    media,
+    server,
+    connect: device.connect,
+    reachabilityTimeoutMs: 60,
+    platform: 'linux',
+  })
+  t.after(() => controller.disconnect({ stopReceiver: false }))
+  await controller.connect(tv(device))
+  await controller.setWindow({ current: track('a'), upcoming: [], position: 0, play: true, repeat: 'none' })
+  assert.equal(seenLocalAddresses[0], '127.0.0.1')
+  await until(() => /TCP port 3422/.test(controller.status().error || ''))
+  assert.match(controller.status().error, /firewall/i)
+  // Once the receiver begins playing, the reachability warning clears.
+  await controller.play()
+  assert.equal(controller.status().error, null)
+})

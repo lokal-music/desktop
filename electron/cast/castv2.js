@@ -151,6 +151,14 @@ class CastConnection extends EventEmitter {
     this.closed = false
   }
 
+  /** The local IPv4 address the kernel chose for this connection, when known. */
+  get localAddress() {
+    const raw = this.socket?.localAddress
+    if (!raw) return null
+    const ip = String(raw).replace(/^::ffff:/i, '')
+    return /^\d+\.\d+\.\d+\.\d+$/.test(ip) && ip !== '0.0.0.0' ? ip : null
+  }
+
   /** Opens the socket and the virtual connection to the device. */
   open() {
     return new Promise((resolve, reject) => {

@@ -3,8 +3,8 @@ const { isIPv4 } = require('net')
 
 // libuv reports interfaces that are up (and running on Unix). An active tunnel
 // can still be unreachable by a LAN phone, so exclude recognizable adapters.
-const VIRTUAL = /wintun|wireguard|tailscale|vpn|tunnel|zerotier|hamachi|anyconnect|fortinet|forticlient|nordlynx|mullvad|proton|surfshark|expressvpn|cloudflare|warp|vbox|virtualbox|vmware|vmnet|vethernet|hyper-v|docker|wsl|virtual|teredo|isatap|6to4|iphttps|loopback|^(?:veth[\da-f]+|br-[\da-f]+|zt[\da-z]+)$|(^|[\s_-])(?:utun|tun|tap|ppp|wg|ipsec|virbr|veth|br)[\d_-]*(?:$|[\s_-])/i
-const PHYSICAL = /ethernet|wi[ -]?fi|wireless|local area connection|^(?:eth\d|en\d|en[opsx]|wl[anpx]|wlan)/i
+const VIRTUAL = /wintun|wireguard|tailscale|vpn|tunnel|zerotier|hamachi|anyconnect|fortinet|forticlient|nordlynx|mullvad|proton|surfshark|expressvpn|cloudflare|warp|vbox|virtualbox|vmware|vmnet|vethernet|hyper-v|docker|podman|waydroid|lxcbr|lxdbr|incusbr|flannel|wsl|virtual|teredo|isatap|6to4|iphttps|loopback|^(?:veth[\da-f]+|br-[\da-f]+|zt[\da-z]+|cni\d*)$|(^|[\s_-])(?:utun|tun|tap|ppp|wg|ipsec|virbr|veth|br|cni)[\d_-]*(?:$|[\s_-])/i
+const PHYSICAL = /ethernet|wi[ -]?fi|wireless|local area connection|^(?:eth\d|en\d|en[opsx]|wl[anopsx]|wlan)/i
 // A Hyper-V external switch can hold the host's actual LAN address.
 const EXTERNAL_BRIDGE = /^vEthernet\s*\(External(?: Switch)?\)$/i
 const privateIPv4 = ip => /^(?:10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.)/.test(ip)

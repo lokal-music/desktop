@@ -35,6 +35,7 @@ const RECONNECT_DELAY_MS = 2000
 const PREPARE_AHEAD_MS = 20000 // a next song that takes longer (an online one that won't resolve) isn't waited for
 const RECONCILE_RETRIES = 3 // the TV's queue failed to update: tried again this many times
 const RECONCILE_RETRY_MS = 1500
+const MEDIA_REACH_TIMEOUT_MS = 12000 // receiver never contacted our HTTP server after LOAD (often a firewall)
 const SUPERSEDED = Symbol('superseded')
 
 class CastController extends EventEmitter {
@@ -44,7 +45,7 @@ class CastController extends EventEmitter {
    * @param options.appId Lokal's own receiver app, when there is one; Google's otherwise
    * @param options.connect for the tests: how a connection is opened
    */
-  constructor({ media, server, appId = null, connect = null, log = () => {}, now = Date.now } = {}) {
+  constructor({ media, server, appId = null, connect = null, log = () => {}, now = Date.now, reachabilityTimeoutMs = MEDIA_REACH_TIMEOUT_MS, platform = process.platform } = {}) {
     super()
     this.media = media
     this.server = server
@@ -52,6 +53,8 @@ class CastController extends EventEmitter {
     this.connectImpl = connect
     this.log = log
     this.now = now
+    this.reachabilityTimeoutMs = reachabilityTimeoutMs
+    this.platform = platform
     this.reset()
   }
 
@@ -81,6 +84,9 @@ class CastController extends EventEmitter {
     this.videoKey = null // the music video on the media server
     this.state = 'idle'
     this.error = null
+    this.reachabilityError = null
+    clearTimeout(this.reachabilityTimer)
+    this.reachabilityTimer = null
     clearInterval(this.poll)
   }
 
@@ -234,6 +240,9 @@ class CastController extends EventEmitter {
   }
 
   teardown() {
+    clearTimeout(this.reachabilityTimer)
+    this.reachabilityTimer = null
+    this.reachabilityError = null
     clearInterval(this.poll)
     for (const key of this.upNextKeys || []) this.media.unpublish?.(key)
     this.upNextKeys = []
@@ -299,6 +308,14 @@ class CastController extends EventEmitter {
     if (status.media?.duration) this.duration = status.media.duration
     if (status.playerState) this.playerState = status.playerState
     this.idleReason = status.playerState === 'IDLE' ? status.idleReason || null : null
+    if (this.playerState && this.playerState !== 'BUFFERING') {
+      clearTimeout(this.reachabilityTimer)
+      this.reachabilityTimer = null
+      if (this.playerState === 'PLAYING' && this.reachabilityError && this.error === this.reachabilityError) {
+        this.error = null
+        this.reachabilityError = null
+      }
+    }
     if (typeof status.currentTime === 'number') { this.position = status.currentTime; this.positionAt = this.now() }
     if (this.playerState === 'IDLE' && this.idleReason === 'ERROR' && !this.loading) this.onTrackError()
     else if (this.playerState === 'IDLE' && this.idleReason === 'FINISHED' && !this.loading) this.emit('finished')
@@ -400,13 +417,44 @@ class CastController extends EventEmitter {
     const key = String(track.id)
     if (!convert && this.prepared.has(key)) return this.prepared.get(key)
     const session = this.session
-    const prepared = await this.media.prepare(track, { deviceHost: this.device?.host, convert })
+    const prepared = await this.media.prepare(track, { deviceHost: this.device?.host, localAddress: this.connection?.localAddress || null, convert })
     // The session ended (or another started) meanwhile: its addresses aren't this one's.
     if (session !== this.session) { this.media.release(prepared); throw new Error('The casting session changed') }
     const previous = this.prepared.get(key)
     if (previous) this.media.release(previous)
     this.prepared.set(key, prepared)
     return prepared
+  }
+
+  unreachableMediaMessage(url) {
+    const name = this.device?.name || 'The Cast device'
+    let target = this.server?.port ? `port ${this.server.port}` : 'this computer'
+    try { if (url) target = new URL(url).host } catch {}
+    return this.platform === 'linux' && this.server?.port
+      ? `${name} couldn't reach this computer at ${target}. Check your firewall (allow TCP port ${this.server.port}).`
+      : `${name} couldn't reach this computer at ${target}. Check your firewall or network settings.`
+  }
+
+  watchMediaReachability(preparedUrl, hitsBefore) {
+    clearTimeout(this.reachabilityTimer)
+    this.reachabilityTimer = null
+    if (typeof hitsBefore !== 'number' || !this.server?.port) return
+    let targetPort = 0
+    try { targetPort = Number(new URL(preparedUrl).port) } catch {}
+    if (targetPort !== this.server.port) return
+    const session = this.session
+    this.reachabilityTimer = setTimeout(() => {
+      this.reachabilityTimer = null
+      if (session !== this.session || this.state !== 'connected') return
+      if (this.playerState !== 'BUFFERING' && !this.loading) return
+      if (this.server.requestCount > hitsBefore) return
+      const message = this.unreachableMediaMessage(preparedUrl)
+      this.log(`cast: ${message}`)
+      this.reachabilityError = message
+      this.error = message
+      this.publish()
+    }, this.reachabilityTimeoutMs)
+    this.reachabilityTimer.unref?.()
   }
 
   queueItem(prepared, { autoplay = true } = {}) {
@@ -456,16 +504,37 @@ class CastController extends EventEmitter {
         const prepared = await this.prepareFor(want.current, { convert: want.convert === want.current.id }, generation)
         if (prepared === SUPERSEDED || stale()) { this.loading = false; return }
         const item = this.queueItem(prepared)
-        const reply = await this.mediaRequest({
-          type: 'LOAD',
-          media: item.media,
-          autoplay: want.play !== false,
-          currentTime: want.position || 0,
-          queueData: { items: [item], startIndex: 0, repeatMode: this.repeatMode(want.repeat) },
-          customData: { lokal: 1 },
-        })
+        const hitsBefore = typeof this.server?.requestCount === 'number' ? this.server.requestCount : null
+        try {
+          const origin = prepared.url ? new URL(prepared.url).origin : 'unknown'
+          this.log(`cast: loading "${want.current.title || currentId}" from ${origin}`)
+        } catch {}
+        this.watchMediaReachability(prepared.url, hitsBefore)
+        let reply
+        try {
+          reply = await this.mediaRequest({
+            type: 'LOAD',
+            media: item.media,
+            autoplay: want.play !== false,
+            currentTime: want.position || 0,
+            queueData: { items: [item], startIndex: 0, repeatMode: this.repeatMode(want.repeat) },
+            customData: { lokal: 1 },
+          })
+        } catch (error) {
+          this.loading = false
+          clearTimeout(this.reachabilityTimer)
+          this.reachabilityTimer = null
+          if (typeof hitsBefore === 'number' && this.server?.port && this.server.requestCount === hitsBefore && /No answer to LOAD/i.test(String(error?.message || ''))) {
+            throw new Error(this.unreachableMediaMessage(prepared.url))
+          }
+          throw error
+        }
         this.loading = false
-        if (reply.type === 'LOAD_FAILED' || reply.type === 'LOAD_CANCELLED' || reply.type === 'INVALID_REQUEST') throw new Error(`The TV couldn't load "${want.current.title || 'this song'}"`)
+        if (reply.type === 'LOAD_FAILED' || reply.type === 'LOAD_CANCELLED' || reply.type === 'INVALID_REQUEST') {
+          clearTimeout(this.reachabilityTimer)
+          this.reachabilityTimer = null
+          throw new Error(`The TV couldn't load "${want.current.title || 'this song'}"`)
+        }
         this.onMediaStatus(reply.status)
         // The one just loaded, whatever id the TV gave it.
         const loaded = this.items.find(entry => entry.itemId === this.currentItemId)
@@ -562,7 +631,7 @@ class CastController extends EventEmitter {
     if (!video?.item) return this.sendCustom({ type: 'video', trackId: video?.trackId || null })
     const added = this.server.add(video.item, video.name || 'video')
     this.videoKey = added.key
-    const url = this.server.urlFor(added.path, this.device?.host)
+    const url = this.server.urlFor(added.path, this.device?.host, this.connection?.localAddress || null)
     return this.sendCustom({ type: 'video', trackId: String(video.trackId), url, segments: video.segments || [] })
   }
 
@@ -573,7 +642,7 @@ class CastController extends EventEmitter {
     const items = (tracks || []).slice(0, UP_NEXT).map(track => {
       let image = null
       try {
-        const art = this.media.artwork?.(track, { deviceHost: this.device?.host })
+        const art = this.media.artwork?.(track, { deviceHost: this.device?.host, localAddress: this.connection?.localAddress || null })
         if (art?.key) keys.push(art.key)
         image = art?.url || null
       } catch {}

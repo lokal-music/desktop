@@ -56,7 +56,7 @@ function registerCastHandlers(ipcMain, { getWindow, powerSaveBlocker }) {
 
   const ensureController = (backend = 'chromecast') => {
     if (controller) return controller
-    server = createCastMediaServer({ log })
+    server = createCastMediaServer({ log, port: Number(process.env.CAST_PORT) || 3422 })
     const sources = require('../online/sources')
     const online = require('./online')
     const cache = require('../cache')

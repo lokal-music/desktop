@@ -101,7 +101,7 @@ export async function startFakeReceiver({ apps = [DEFAULT_MEDIA_RECEIVER], name 
           const start = data.queueData?.startIndex || 0
           state.media = {
             mediaSessionId: state.nextMediaSession++, items: newItems(queue), current: start,
-            time: data.currentTime || 0, playerState: data.autoplay === false ? 'PAUSED' : 'PLAYING', idleReason: null,
+            time: data.currentTime || 0, playerState: state.loadPlayerState || (data.autoplay === false ? 'PAUSED' : 'PLAYING'), idleReason: null,
             repeatMode: data.queueData?.repeatMode || 'REPEAT_OFF',
           }
           fetchItems(state.media.items)
