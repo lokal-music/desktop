@@ -217,6 +217,7 @@ async function prepareRestore(payload, current, selection, {
       throw new Error('The selected mobile folder is unavailable. Choose an accessible folder and try again.')
     }
     settings.phone_download_root = selectedPhoneRoot
+    settings.phone_download_root_device = String((await stat(selectedPhoneRoot)).dev)
   }
 
   // Explicit library folder mappings, ordered most-specific first.
