@@ -53,7 +53,9 @@ async function speakerArtwork(controlUrl, mediaUrl, fetchImpl = fetch) {
 async function describe(location, fetchImpl = fetch) {
   location = lanUrl(location)
   const doc = await request(location, {}, fetchImpl)
-  const device = nodes(doc, 'device').find(d => /MediaRenderer|ZonePlayer/.test(d.children.find(x => x.name === 'deviceType')?.text || ''))
+  const allDevices = nodes(doc, 'device')
+  const device = allDevices.find(d => /MediaRenderer|ZonePlayer/.test(d.children.find(x => x.name === 'deviceType')?.text || ''))
+    || allDevices.find(d => nodes(d, 'service').some(s => /AVTransport/i.test(value(s, 'serviceType'))))
   if (!device) return null
   const services = {}
   const base = value(doc, 'URLBase') || location
@@ -63,9 +65,21 @@ async function describe(location, fetchImpl = fetch) {
     if (name && value(svc, 'controlURL')) services[name] = { type, url: lanUrl(value(svc, 'controlURL'), base) }
   }
   if (!services.AVTransport) return null
-  const sonos = /sonos/i.test(value(device, 'manufacturer')) || !!services.ZoneGroupTopology
-  return { id: `upnp:${value(device, 'UDN') || location}`, uuid: value(device, 'UDN').replace(/^uuid:/, ''), name: value(device, 'roomName') || value(device, 'friendlyName') || new URL(location).hostname,
-    model: value(device, 'modelName'), host: new URL(location).hostname, kind: 'speaker', backend: 'upnp', sonos, location, services }
+  const manufacturer = value(device, 'manufacturer') || value(doc, 'manufacturer')
+  const udn = value(device, 'UDN') || value(doc, 'UDN')
+  const sonos = /sonos/i.test(manufacturer) || !!services.ZoneGroupTopology
+  return {
+    id: `upnp:${udn || location}`,
+    uuid: udn.replace(/^uuid:/, ''),
+    name: value(device, 'roomName') || value(doc, 'roomName') || value(device, 'friendlyName') || value(doc, 'friendlyName') || new URL(location).hostname,
+    model: value(device, 'modelName') || value(doc, 'modelName'),
+    host: new URL(location).hostname,
+    kind: 'speaker',
+    backend: 'upnp',
+    sonos,
+    location,
+    services,
+  }
 }
 
 // Resolves a selected room to its current group coordinator without regrouping.
@@ -87,15 +101,20 @@ class UpnpDiscovery extends EventEmitter {
   constructor({
     log = () => {},
     fetchImpl = fetch,
-    createSocket = () => require('dgram').createSocket({ type: 'udp4', reuseAddr: true }),
+    createSocket,
+    createNotifySocket,
     interfaces = () => require('../network/lanInterfaces').lanInterfaces(),
     mdns = () => require('../network/mdns').acquireMdns(),
     now = Date.now,
   } = {}) {
     super()
+    const defaultSocket = () => require('dgram').createSocket({ type: 'udp4', reuseAddr: true })
     this.log = log
     this.fetch = fetchImpl
-    this.createSocket = createSocket
+    this.createSocket = createSocket || defaultSocket
+    this.createNotifySocket = createNotifySocket !== undefined
+      ? createNotifySocket
+      : (createSocket ? null : defaultSocket)
     this.interfaces = interfaces
     this.createMdns = mdns
     this.now = now
@@ -104,6 +123,7 @@ class UpnpDiscovery extends EventEmitter {
     this.probedAt = new Map()
     this.topologyAt = new Map()
     this.sockets = []
+    this.notifySocket = null
     this.mdns = null
     this.mdnsKnown = new Map()
     this.mdnsAddresses = new Map()
@@ -127,16 +147,63 @@ class UpnpDiscovery extends EventEmitter {
     try { this.mdns?.query({ questions: [{ name: SONOS_MDNS_SERVICE, type: 'PTR' }] }) } catch (error) { this.log(`Sonos mDNS query: ${error?.message || error}`) }
   }
 
+  // Passive multicast SSDP NOTIFY listener (239.255.255.250:1900).
+  // Linux firewalls like UFW allow multicast port 1900 by default even when
+  // unicast M-SEARCH replies to ephemeral ports are dropped.
+  startNotifyListener(addresses = []) {
+    if (this.notifySocket || typeof this.createNotifySocket !== 'function') return
+    let socket
+    try { socket = this.createNotifySocket() } catch { return }
+    this.notifySocket = socket
+    socket.on('error', error => {
+      this.log(`UPnP notify: ${error?.message || error}`)
+      if (this.notifySocket === socket) this.notifySocket = null
+      try { socket.close() } catch {}
+    })
+    socket.on('message', data => this.onNotify(data))
+    const join = () => {
+      if (this.notifySocket !== socket) { try { socket.close() } catch {} return }
+      const targets = addresses.length ? addresses : [null]
+      for (const address of targets) {
+        try {
+          if (address) socket.addMembership?.('239.255.255.250', address)
+          else socket.addMembership?.('239.255.255.250')
+        } catch {}
+      }
+    }
+    try {
+      socket.bind(1900, join)
+    } catch {
+      if (this.notifySocket === socket) this.notifySocket = null
+      try { socket.close() } catch {}
+    }
+  }
+
+  onNotify(data) {
+    const text = String(data || '')
+    if (!/^NOTIFY\s+\*\s+HTTP\/1\.[01]/i.test(text)) return
+    const nts = text.match(/^nts\s*:\s*(.+)$/im)?.[1]?.trim() || ''
+    if (/ssdp:byebye/i.test(nts)) return
+    const nt = text.match(/^nt\s*:\s*(.+)$/im)?.[1]?.trim() || ''
+    if (!/MediaRenderer|ZonePlayer|AVTransport/i.test(nt)) return
+    const location = text.match(/^location\s*:\s*(.+)$/im)?.[1]?.trim()
+    if (location) this.probeLocation(location)
+  }
+
   scan() {
     this.startMdns()
     this.askMdns()
+    let addresses = []
+    try {
+      addresses = [...new Set((this.interfaces?.() || []).map(entry => entry?.address).filter(address => isIPv4(address || '')))]
+    } catch (error) {
+      this.log(`UPnP interfaces: ${error?.message || error}`)
+    }
+    this.startNotifyListener(addresses)
+    for (const entry of this.devices.values()) {
+      if (entry.device?.location) this.probeLocation(entry.device.location)
+    }
     if (!this.sockets.length) {
-      let addresses = []
-      try {
-        addresses = [...new Set((this.interfaces?.() || []).map(entry => entry?.address).filter(address => isIPv4(address || '')))]
-      } catch (error) {
-        this.log(`UPnP interfaces: ${error?.message || error}`)
-      }
       const targets = addresses.length ? addresses : [null]
       for (const address of targets) {
         let socket
@@ -292,6 +359,8 @@ class UpnpDiscovery extends EventEmitter {
     clearTimeout(this.retryTimer)
     clearTimeout(this.timer)
     this.closeSockets()
+    try { this.notifySocket?.close() } catch {}
+    this.notifySocket = null
     try { this.mdns?.destroy() } catch {}
     this.mdns = null
   }

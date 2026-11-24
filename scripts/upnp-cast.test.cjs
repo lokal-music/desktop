@@ -401,3 +401,59 @@ test('UpnpController reports a Linux firewall error when Sonos never fetches fro
   assert.equal(controller.status().error, null)
 })
 
+test('UpnpDiscovery listens for multicast SSDP NOTIFY announcements on 239.255.255.250:1900 and describe() accepts AVTransport devices regardless of deviceType', async t => {
+  const { EventEmitter } = require('events')
+  const notifySock = new EventEmitter()
+  notifySock.boundPort = null
+  notifySock.memberships = []
+  notifySock.closed = false
+  notifySock.bind = (port, cb) => { notifySock.boundPort = port; cb?.() }
+  notifySock.addMembership = (group, iface) => notifySock.memberships.push({ group, iface })
+  notifySock.close = () => { notifySock.closed = true }
+
+  const probed = []
+  const discovery = new UpnpDiscovery({
+    interfaces: () => [{ address: '192.168.1.178' }],
+    mdns: null,
+    createSocket: () => {
+      const sock = new EventEmitter()
+      sock.bind = (_p, _a, cb) => cb?.()
+      sock.send = () => {}
+      sock.close = () => {}
+      return sock
+    },
+    createNotifySocket: () => notifySock,
+    fetchImpl: async url => {
+      probed.push(url)
+      return response(
+        '<device><deviceType>urn:schemas-upnp-org:device:Basic:1</deviceType>' +
+        '<UDN>uuid:TURNTABLE_1</UDN><manufacturer>Victrola</manufacturer><friendlyName>Stream Turntable</friendlyName>' +
+        '<serviceList><service><serviceType>urn:schemas-upnp-org:service:AVTransport:1</serviceType>' +
+        '<controlURL>/AVTransport/control</controlURL></service></serviceList></device>'
+      )
+    },
+  })
+  t.after(() => discovery.stop())
+
+  const found = new Promise(resolve => discovery.once('change', resolve))
+  discovery.scan()
+  assert.equal(notifySock.boundPort, 1900)
+  assert.deepEqual(notifySock.memberships, [{ group: '239.255.255.250', iface: '192.168.1.178' }])
+
+  // Non-audio devices and ssdp:byebye announcements are ignored.
+  notifySock.emit('message', Buffer.from('NOTIFY * HTTP/1.1\r\nNT: urn:schemas-upnp-org:device:InternetGatewayDevice:1\r\nNTS: ssdp:alive\r\nLOCATION: http://192.168.1.1/rootDesc.xml\r\n\r\n'))
+  notifySock.emit('message', Buffer.from('NOTIFY * HTTP/1.1\r\nNT: urn:schemas-upnp-org:device:MediaRenderer:1\r\nNTS: ssdp:byebye\r\nLOCATION: http://192.168.1.88:1400/desc.xml\r\n\r\n'))
+  assert.equal(probed.length, 0)
+
+  // A MediaRenderer/AVTransport ssdp:alive NOTIFY triggers probing even when M-SEARCH replies are blocked.
+  notifySock.emit('message', Buffer.from('NOTIFY * HTTP/1.1\r\nNT: urn:schemas-upnp-org:service:AVTransport:1\r\nNTS: ssdp:alive\r\nLOCATION: http://192.168.1.90:49152/description.xml\r\n\r\n'))
+  const list = await found
+  assert.equal(list.length, 1)
+  assert.equal(list[0].name, 'Stream Turntable')
+  assert.equal(list[0].services.AVTransport.url, 'http://192.168.1.90:49152/AVTransport/control')
+
+  discovery.stop()
+  assert.equal(notifySock.closed, true)
+})
+
+
