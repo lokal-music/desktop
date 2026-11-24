@@ -165,7 +165,13 @@ async function planFolders(incoming, current, selection, readable) {
 
   const folders = roots([primary, ...currentFolders, ...mappings.map(entry => entry.folder)])
   const folderAvailable = await Promise.all(folders.map(available))
-  return { primary: folders[0] || null, mappings, folders, onlineFolders: folders.filter((_, index) => folderAvailable[index]) }
+  return {
+    primary: folders[0] || null,
+    mappings,
+    folders,
+    onlineFolders: folders.filter((_, index) => folderAvailable[index]),
+    phoneRoot: nativePath(current.phone_download_root),
+  }
 }
 
 function restoredSettings(incoming, current, plan) {
@@ -203,6 +209,15 @@ async function prepareRestore(payload, current, selection, {
     ? payload.settings : {}
   const plan = await planFolders(incoming, current, selection, readable)
   const settings = restoredSettings(incoming, current, plan)
+  const selectedPhoneRoot = selection && Object.hasOwn(selection, 'phoneRoot')
+    ? nativePath(selection.phoneRoot)
+    : null
+  if (selection && Object.hasOwn(selection, 'phoneRoot')) {
+    if (!selectedPhoneRoot || !await readable(selectedPhoneRoot)) {
+      throw new Error('The selected mobile folder is unavailable. Choose an accessible folder and try again.')
+    }
+    settings.phone_download_root = selectedPhoneRoot
+  }
 
   // Explicit library folder mappings, ordered most-specific first.
   const folderMappings = [...plan.mappings]
@@ -230,6 +245,7 @@ async function prepareRestore(payload, current, selection, {
     : null
 
   const phoneDestinationCandidates = roots([
+    selectedPhoneRoot,
     explicitDestinationPhone,
     ...(sourcePhoneName ? [
       destinationDownloads && path.join(destinationDownloads, sourcePhoneName),
@@ -249,6 +265,9 @@ async function prepareRestore(payload, current, selection, {
   const explicitEntries = folderMappings.map(entry => ({ ...entry, priority: 0 }))
   const extraEntries = []
   if (sourcePhone) {
+    if (selectedPhoneRoot) {
+      extraEntries.push({ source: sourcePhone, folder: selectedPhoneRoot, priority: 0 })
+    }
     if (explicitDestinationPhone) {
       extraEntries.push({ source: sourcePhone, folder: explicitDestinationPhone, priority: 0 })
     }
