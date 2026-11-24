@@ -4,8 +4,11 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import {
-  relativeInside, relativeFromFolderMarker, destinationPath,
-  rebaseMobileTrackPaths, migrateLegacyRoamingMobileFiles,
+  relativeInside,
+  relativeFromFolderMarker,
+  destinationPath,
+  rebaseMobileTrackPaths,
+  migrateLegacyRoamingMobileFiles,
 } from '../electron/mobilePathRelocation.js'
 
 test('rebases Windows backup paths onto a Linux Lokal Mobile folder', () => {
@@ -13,14 +16,21 @@ test('rebases Windows backup paths onto a Linux Lokal Mobile folder', () => {
   const file = 'C:\\Music\\Lokal Mobile\\Artist\\Album\\Track.flac'
   const artwork = 'C:\\Music\\Lokal Mobile\\Artist\\Album\\cover.jpg'
   const newRoot = '/mnt/music/Lokal Mobile'
-  assert.equal(relativeInside(file, oldRoot), 'Artist\\Album\\Track.flac')
-  assert.equal(relativeInside(artwork, oldRoot), 'Artist\\Album\\cover.jpg')
-  assert.equal(destinationPath(newRoot, 'Artist\\Album\\Track.flac'), '/mnt/music/Lokal Mobile/Artist/Album/Track.flac')
+
+  const trackRelative = relativeInside(file, oldRoot)
+  const artworkRelative = relativeInside(artwork, oldRoot)
+  assert.equal(trackRelative, 'Artist\\Album\\Track.flac')
+  assert.equal(artworkRelative, 'Artist\\Album\\cover.jpg')
+  assert.equal(destinationPath(newRoot, trackRelative), '/mnt/music/Lokal Mobile/Artist/Album/Track.flac')
+  assert.equal(destinationPath(newRoot, artworkRelative), '/mnt/music/Lokal Mobile/Artist/Album/cover.jpg')
 })
 
-test('repairs already-restored tracks when destination root is already saved', () => {
+test('repairs already-restored tracks when the setting already contains the destination root', () => {
   const newRoot = 'E:\\Lokal Mobile'
-  assert.equal(relativeFromFolderMarker('C:\\Music\\Lokal Mobile\\Artist\\Track.flac', newRoot), 'Artist\\Track.flac')
+  const oldTrack = 'C:\\Music\\Lokal Mobile\\Artist\\Track.flac'
+  const relative = relativeFromFolderMarker(oldTrack, newRoot)
+  assert.equal(relative, 'Artist\\Track.flac')
+  assert.equal(destinationPath(newRoot, relative), 'E:\\Lokal Mobile\\Artist\\Track.flac')
 })
 
 test('supports Windows drive-letter changes using the saved source root', () => {
@@ -36,16 +46,30 @@ test('does not rebase paths outside the mobile folder', () => {
 })
 
 test('rebase updates mobile file and artwork paths while preserving track identity', () => {
-  const rows = [{ id: 'mobile-track', file_path: 'C:\\Music\\Lokal Mobile\\Artist\\Track.flac', artwork_path: 'C:\\Music\\Lokal Mobile\\Artist\\cover.jpg' }]
+  const rows = [{
+    id: 'mobile-track',
+    file_path: 'C:\\Music\\Lokal Mobile\\Artist\\Track.flac',
+    artwork_path: 'C:\\Music\\Lokal Mobile\\Artist\\cover.jpg',
+  }]
   const updates = []
-  const database = { prepare(sql) {
-    if (sql.includes('SELECT id, file_path, artwork_path')) return { all: () => rows }
-    if (sql.includes('UPDATE tracks SET file_path')) return { run: (filePath, artworkPath, id) => updates.push({ filePath, artworkPath, id }) }
-    throw new Error('Unexpected SQL: ' + sql)
-  } }
-  assert.deepEqual(rebaseMobileTrackPaths(database, 'E:\\Lokal Mobile', 'E:\\Lokal Mobile'), { tracks: 1, artwork: 1 })
-  assert.equal(updates[0].id, 'mobile-track')
+  const database = {
+    prepare(sql) {
+      if (sql.includes('SELECT id, file_path, artwork_path')) return { all: () => rows }
+      if (sql.includes('UPDATE tracks SET file_path')) return {
+        run: (filePath, artworkPath, id) => updates.push({ filePath, artworkPath, id }),
+      }
+      throw new Error('Unexpected SQL: ' + sql)
+    },
+  }
+  const result = rebaseMobileTrackPaths(database, 'E:\\Lokal Mobile', 'E:\\Lokal Mobile')
+  assert.deepEqual(result, { tracks: 1, artwork: 1 })
+  assert.deepEqual(updates, [{
+    filePath: 'E:\\Lokal Mobile\\Artist\\Track.flac',
+    artworkPath: 'E:\\Lokal Mobile\\Artist\\cover.jpg',
+    id: 'mobile-track',
+  }])
 })
+
 
 test('copies legacy roaming phone downloads into selected portable folder and keeps originals', t => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'lokal-roaming-migration-'))
