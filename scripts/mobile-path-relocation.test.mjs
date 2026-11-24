@@ -41,7 +41,7 @@ test('does not rebase paths outside the mobile folder', () => {
   assert.equal(relativeFromFolderMarker('/other/Artist/Track.flac', '/mnt/Lokal Mobile'), null)
 })
 
-test('rebase updates only mobile file and artwork paths and preserves track identity', () => {
+test('rebase updates mobile file and artwork paths while preserving track identity', () => {
   const rows = [{
     id: 'mobile-track',
     file_path: 'C:\\Music\\Lokal Mobile\\Artist\\Track.flac',
@@ -57,11 +57,11 @@ test('rebase updates only mobile file and artwork paths and preserves track iden
       throw new Error('Unexpected SQL: ' + sql)
     },
   }
-  const result = rebaseMobileTrackPaths(database, 'C:\\Music\\Lokal Mobile', '/mnt/music/Lokal Mobile')
+  const result = rebaseMobileTrackPaths(database, 'E:\\Lokal Mobile', 'E:\\Lokal Mobile')
   assert.deepEqual(result, { tracks: 1, artwork: 1 })
   assert.deepEqual(updates, [{
-    filePath: '/mnt/music/Lokal Mobile/Artist/Track.flac',
-    artworkPath: '/mnt/music/Lokal Mobile/Artist/cover.jpg',
+    filePath: 'E:\\Lokal Mobile\\Artist\\Track.flac',
+    artworkPath: 'E:\\Lokal Mobile\\Artist\\cover.jpg',
     id: 'mobile-track',
   }])
 })

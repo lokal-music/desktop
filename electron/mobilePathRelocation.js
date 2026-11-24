@@ -2,7 +2,9 @@ const path = require('path')
 
 function pathApi(value) {
   if (typeof value !== 'string') return null
-  if (path.win32.isAbsolute(value)) return path.win32
+  // path.win32 also treats a POSIX root such as /mnt as rooted; only choose
+  // Windows semantics for drive-letter or UNC paths.
+  if (/^[a-z]:[\\/]/i.test(value) || /^\\\\[^\\]+\\[^\\]+/.test(value)) return path.win32
   if (path.posix.isAbsolute(value)) return path.posix
   return null
 }
