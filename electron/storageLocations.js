@@ -4,7 +4,7 @@ const fs = require('fs')
 const path = require('path')
 const os = require('os')
 const { getDB, getStorageDir } = require('./ipc/db')
-const { rebaseMobileTrackPaths } = require('./mobilePathRelocation')
+const { rebaseMobileTrackPaths, migrateLegacyRoamingMobileFiles } = require('./mobilePathRelocation')
 
 const KEYS = Object.freeze({ downloads: 'download_root', cache: 'cache_root', phone: 'phone_download_root' })
 
@@ -16,31 +16,19 @@ function savedRoot(kind, settings) {
     try { raw = getDB()?.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value } catch {}
   }
   const value = typeof raw === 'string' ? raw.trim() : ''
-  // Malformed settings/backup imports never become relative working-directory paths.
   return value && path.isAbsolute(value) ? path.resolve(value) : ''
 }
 
-// A chosen mountpoint can remain writable after its drive is disconnected.
-// Detect volume replacement BEFORE allowing any new media or cache writes.
 function assertSelectedVolume(kind, root = savedRoot(kind)) {
   if (!root) return
   const key = KEYS[kind]
   if (!key) throw new Error('Unknown storage location')
   let expected
-  try {
-    expected = getDB()?.prepare('SELECT value FROM settings WHERE key = ?')
-      .get(key + '_device')?.value
-  } catch {}
-  // Existing preferences predate volume tracking. Re-choosing the location
-  // records its device identity; we still reject a missing selected path.
+  try { expected = getDB()?.prepare('SELECT value FROM settings WHERE key = ?').get(key + '_device')?.value } catch {}
   let actual
   try { actual = String(fs.statSync(root).dev) }
-  catch {
-    throw new Error('Selected ' + kind + ' drive is unavailable. Reconnect it or choose another location.')
-  }
-  if (expected && expected !== actual) {
-    throw new Error('Selected ' + kind + ' drive has changed. Reconnect the original volume or choose another location.')
-  }
+  catch { throw new Error('Selected ' + kind + ' drive is unavailable. Reconnect it or choose another location.') }
+  if (expected && expected !== actual) throw new Error('Selected ' + kind + ' drive has changed. Reconnect the original volume or choose another location.')
 }
 
 function downloadDirectory(settings = {}, explicitOutputDir = '') {
@@ -53,21 +41,14 @@ function downloadDirectory(settings = {}, explicitOutputDir = '') {
   return settings.music_folder || path.join(os.homedir(), 'Music')
 }
 
-// Paired-phone originals follow the same user-selected download drive,
-// never the private application database directory.
 function phoneCopyDirectory(settings = {}) {
   return path.join(downloadDirectory(settings), 'Lokal Phone')
 }
 
-// Incoming paired-phone files live here; independent of normal downloads
-// and app-private storage. Never silently fall back after an explicit choice.
 function phoneDownloadDirectory(settings = {}) {
-  // Respect the main library location when no download drive is selected.
-  // A dedicated phone folder, when selected, takes precedence over both.
   let library = settings.music_folder
   if (!library) {
-    try { library = getDB()?.prepare('SELECT value FROM settings WHERE key = ?')
-      .get('music_folder')?.value } catch {}
+    try { library = getDB()?.prepare('SELECT value FROM settings WHERE key = ?').get('music_folder')?.value } catch {}
   }
   const selected = savedRoot('phone', settings)
   if (selected) {
@@ -86,7 +67,6 @@ function cacheDirectoryRoot() {
   return getStorageDir()
 }
 
-/** Validate *before* persisting. Never silently fall back to C: on failures. */
 function validateWritableDirectory(selected) {
   if (typeof selected !== 'string' || !selected.trim() || !path.isAbsolute(selected.trim())) {
     throw new Error('Select an absolute folder on the drive you want to use.')
@@ -94,8 +74,6 @@ function validateWritableDirectory(selected) {
   const folder = path.resolve(selected.trim())
   fs.mkdirSync(folder, { recursive: true })
   if (!fs.statSync(folder).isDirectory()) throw new Error('The selected path is not a directory.')
-  // Check actual creation, not merely access(): network/readonly mounts may
-  // report a writable mode while refusing new files.
   const probe = path.join(folder, '.lokal-write-test-' + process.pid + '-' + Date.now())
   const fd = fs.openSync(probe, 'wx')
   try { fs.writeSync(fd, 'Lokal') } finally {
@@ -114,10 +92,10 @@ function saveRoot(kind, selected) {
   const previousPhoneRoot = kind === 'phone' ? savedRoot('phone') : ''
   const device = root ? String(fs.statSync(root).dev) : ''
   database.transaction(() => {
-    // Updating the setting alone leaves restored mobile tracks pointing at
-    // the old PC's absolute paths. Rebase paths in the same transaction as
-    // the setting so the Library selector repairs an already-restored backup.
     if (kind === 'phone' && root) {
+      // Migrate files from older builds' private AppData/Roaming storage into
+      // the portable folder. Copy first and retain originals for safe recovery.
+      migrateLegacyRoamingMobileFiles(database, path.join(getStorageDir(), 'phone-downloads'), root)
       rebaseMobileTrackPaths(database, previousPhoneRoot, root)
     }
     database.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(key, root)
