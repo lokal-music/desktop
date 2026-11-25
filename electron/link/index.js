@@ -77,7 +77,7 @@ function createLink({ server, db, remote, enabled = () => true, advertiseDesktop
     sockets.set(device.id,socket)
     socket.alive=true
     socket.on('pong',()=>{socket.alive=true})
-    send(socket,'hello',{desktopId:store.deviceId,name:os.hostname(),user:{id:device.user_id},proto:1,capabilities:['remote','handoff','history','library','theme'],syncPreview:{history:db.prepare('SELECT COUNT(*) n FROM history_events WHERE user_id=?').get(device.user_id).n,operations:db.prepare('SELECT COUNT(*) n FROM library_ops WHERE user_id=?').get(device.user_id).n}})
+    send(socket,'hello',{desktopId:store.deviceId,name:os.hostname(),platform:process.platform,user:{id:device.user_id},proto:1,capabilities:['remote','handoff','history','library','theme'],syncPreview:{history:db.prepare('SELECT COUNT(*) n FROM history_events WHERE user_id=?').get(device.user_id).n,operations:db.prepare('SELECT COUNT(*) n FROM library_ops WHERE user_id=?').get(device.user_id).n}})
     send(socket,'state',{...remote.getRemoteState(),target:'desktop'})
     send(socket,'theme',desktopTheme())
     socket.on('message',async raw => {
@@ -171,11 +171,18 @@ function createLink({ server, db, remote, enabled = () => true, advertiseDesktop
       ensureDiscovery(true)
       const pairing=store.createPairing(currentUser())
       const info=remote.getRemoteConnectionInfo()
-      const host=info.primary?new URL(info.primary).hostname:null
+      const hosts=(info.urls||[]).map(u=>{try{return new URL(u).hostname}catch{return null}}).filter(Boolean)
+      let host=info.primary?new URL(info.primary).hostname:null
+      if (hosts.length>1) {
+        try {
+          const routed=await require('../cast/mediaServer').routeAddressFor('192.0.2.1',80)
+          if (routed && hosts.includes(routed)) host=routed
+        } catch {}
+      }
       const uri=host?`lokal://pair?${new URLSearchParams({host,port:String(Number(process.env.PORT)||3421),id:store.deviceId,code:pairing.code})}`:null
-      return {...pairing,uri,qrDataUrl:uri?await QRCode.toDataURL(uri,{width:256,margin:2}):null,name:os.hostname()}
+      return {...pairing,uri,qrDataUrl:uri?await QRCode.toDataURL(uri,{width:256,margin:2}):null,name:os.hostname(),platform:process.platform}
     },
-    pair(body,address) { const result=store.pair(body,address);closeDevice(body.deviceId,'paired again');return result },
+    pair(body,address) { const result=store.pair(body,address);closeDevice(body.deviceId,'paired again');return {...result,name:os.hostname(),platform:process.platform} },
     devices() { return store.devices(currentUser()).map(device=>({...device,connected:sockets.has(device.id),state:snapshots.get(device.id)||null})) },
     renameDevice(id, name) {
       const user = currentUser()
