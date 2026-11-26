@@ -768,8 +768,13 @@ function sourceFilter(source, userId = 'guest', db = null) {
     try {
       hasCatalog = !!db?.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='link_mobile_catalog'").get()
     } catch {}
+    // Link catalogue ownership comes from the paired device's Link account
+    // (device.user_id), not the transient remote-player state. The latter is
+    // commonly absent and defaults to "guest", which hid every catalogue row
+    // belonging to a signed-in Link account. The catalogue is already scoped
+    // to this Desktop database, so match any paired-device association here.
     return hasCatalog
-      ? { sql: "(download_source = ? OR id IN (SELECT track_id FROM link_mobile_catalog WHERE user_id = ?))", params: ['mobile', String(userId || 'guest')] }
+      ? { sql: "(download_source = ? OR id IN (SELECT track_id FROM link_mobile_catalog))", params: ['mobile'] }
       : { sql: 'download_source = ?', params: ['mobile'] }
   }
   if (['yt', 'sc', 'mono', 'soulseek', 'web'].includes(source)) return { sql: 'download_source = ?', params: [source] }
