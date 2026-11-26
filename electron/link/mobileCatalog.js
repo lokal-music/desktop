@@ -36,7 +36,7 @@ function createMobileCatalog(db, store) {
         !Array.isArray(items) || items.length > MAX_ITEMS ||
         !Number.isInteger(page) || !Number.isInteger(pages) ||
         pages < 1 || pages > Math.ceil(MAX_SNAPSHOT / MAX_ITEMS) ||
-        page < 0 || page >= pages) throw new Error('Invalid mobile catalogue page')
+        page < 0 || page >= pages || typeof body.complete !== 'boolean') throw new Error('Invalid mobile catalogue page')
 
     const now = Date.now()
     const accepted = db.transaction(() => {
@@ -62,7 +62,7 @@ function createMobileCatalog(db, store) {
         }
         insert.run(userId, deviceId, fields.track_key, track.id, snapshotId, now)
       }
-      if (page === pages - 1) {
+      if (page === pages - 1 && body.complete) {
         // Only prune after the final page. An interrupted snapshot therefore
         // cannot make previously published phone songs disappear.
         db.prepare('DELETE FROM link_mobile_catalog WHERE user_id=? AND device_id=? AND snapshot_id<>?')
