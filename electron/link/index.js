@@ -120,6 +120,24 @@ function createLink({ server, db, remote, enabled = () => true, advertiseDesktop
             libraryRefresh.accepted(0, store.takeVideoClipChanges())
             send(socket,'library.ops',store.pull('library_ops',device.user_id,body.cursor,{trackLifecycle:socket.capabilities?.has('track_lifecycle')||body.trackLifecycle===true}),message.id)
             break
+          case 'catalog.begin':
+            if (device.legacy) throw new Error('Pair this device before syncing')
+            store.beginMobileCatalog(body, device.user_id, device.id)
+            break
+          case 'catalog.push': {
+            if (device.legacy) throw new Error('Pair this device before syncing')
+            const accepted = store.applyMobileCatalog(body.tracks, body, device.user_id, device.id)
+            libraryRefresh.accepted(accepted, [])
+            send(socket, 'ack', { ok: true, accepted }, message.id)
+            break
+          }
+          case 'catalog.end': {
+            if (device.legacy) throw new Error('Pair this device before syncing')
+            const result = store.finishMobileCatalog(body, device.user_id, device.id)
+            libraryRefresh.accepted(result.received, [])
+            send(socket, 'ack', { ok: true, ...result }, message.id)
+            break
+          }
           case 'library.push': {
             if (device.legacy) throw new Error('Pair this device before syncing')
             // Capture desktop changes before applying phone edits. Snapshot the
