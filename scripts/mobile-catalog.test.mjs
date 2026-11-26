@@ -18,6 +18,7 @@ function fixture() {
     CREATE TABLE playlists (id TEXT PRIMARY KEY, user_id TEXT, name TEXT, uuid TEXT);
     CREATE TABLE playlist_tracks (id INTEGER PRIMARY KEY, playlist_id TEXT, track_id TEXT, position INTEGER);
     CREATE TABLE user_likes (user_id TEXT, track_id TEXT, liked_at INTEGER);
+    CREATE TABLE play_history (user_id TEXT, track_id TEXT, played_at INTEGER);
     CREATE TABLE listening_events (id INTEGER PRIMARY KEY, user_id TEXT, track_id TEXT, event_type TEXT, ended_at INTEGER, created_at INTEGER, seconds_played INTEGER);
     CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);
   `)
