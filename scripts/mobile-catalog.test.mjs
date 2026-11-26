@@ -30,7 +30,7 @@ test('mobile catalogue skips recordings already present on desktop and stores pl
   try {
     db.prepare(`INSERT INTO tracks
       (id,file_path,file_hash,title,artist,album,duration,download_source)
-      VALUES (?,?,?,?,?,?,?,NULL)`).run('local-1', '/music/Already Here.flac', 'local-hash', 'Already Here', 'Artist A', 'Album', 201, null)
+      VALUES (?,?,?,?,?,?,?,NULL)`).run('local-1', '/music/Already Here.flac', 'local-hash', 'Already Here', 'Artist A', 'Album', 201)
     const snapshot = 'snapshot_12345678'
     const device = 'phone_device_123'
     store.beginMobileCatalog({ device_id: device, snapshot_id: snapshot }, 'owner', device)
