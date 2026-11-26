@@ -282,7 +282,7 @@ class LinkStore {
           octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31 ||
           octets[0] === 169 && octets[1] === 254
         )
-        if (url.protocol !== 'http:' || !privateV4 || !/^\\/[A-Za-z0-9_-]{20,64}$/.test(url.pathname) || !url.port || url.username || url.password || url.search || url.hash)
+        if (url.protocol !== 'http:' || !privateV4 || !url.pathname.startsWith('/') || !/^[A-Za-z0-9_-]{20,64}$/.test(url.pathname.slice(1)) || !url.port || url.username || url.password || url.search || url.hash)
           throw new Error('Mobile stream must use a private LAN address')
         const fields = {
           title: text(item.title, 500), artist: text(item.artist, 500),
