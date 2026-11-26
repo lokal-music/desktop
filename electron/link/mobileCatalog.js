@@ -48,6 +48,10 @@ function createMobileCatalog(db, store) {
         const fields = {
           title, artist, album: text(raw.album, 1000),
           album_artist: text(raw.album_artist, 1000),
+          track_num: Number.isInteger(raw.track_num) && raw.track_num > 0 ? raw.track_num : null,
+          disc_num: Number.isInteger(raw.disc_num) && raw.disc_num > 0 ? raw.disc_num : null,
+          year: Number.isInteger(raw.year) && raw.year >= 1000 && raw.year <= 2999 ? raw.year : null,
+          genre: text(raw.genre, 500),
           duration, artwork_url: text(raw.artwork_url, 2000),
           track_key: trackKey({ title, artist, duration }),
         }
@@ -59,6 +63,13 @@ function createMobileCatalog(db, store) {
         if (!track) continue
         if (String(track.file_path || '').startsWith('ghost://link/')) {
           db.prepare("UPDATE tracks SET file_path=?, download_source='mobile' WHERE id=?").run('ghost://mobile/' + track.id, track.id)
+        }
+        if (String(track.file_path || '').startsWith('ghost://mobile/')) {
+          db.prepare(`UPDATE tracks SET
+            album_artist=COALESCE(NULLIF(album_artist,''),?),
+            track_num=COALESCE(track_num,?), disc_num=COALESCE(disc_num,?),
+            year=COALESCE(year,?), genre=COALESCE(NULLIF(genre,''),?)
+            WHERE id=?`).run(fields.album_artist, fields.track_num, fields.disc_num, fields.year, fields.genre, track.id)
         }
         insert.run(userId, deviceId, fields.track_key, track.id, snapshotId, now)
       }
