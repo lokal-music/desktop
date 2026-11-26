@@ -4,7 +4,7 @@ import { mapLimited, resolveRecommendationTracks, isAddonVerificationRequiredErr
 import { announceTrackMerges } from './mergedTracks.js'
 
 export const isMobileLinkedTrack = track =>
-  !!track?.id && String(track.file_path || '').startsWith('ghost://mobile/') &&
+  !!track?.id && (String(track.file_path || '').startsWith('ghost://mobile/') || String(track.file_path || '').startsWith('ghost://link/')) &&
   !!String(track.title || '').trim() && !!String(track.artist || '').trim()
 
 /** Use this PC's sources, then move the synced identity onto the playable row.
