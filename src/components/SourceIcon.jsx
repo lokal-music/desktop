@@ -80,7 +80,7 @@ export function TrackSourceIcon({ track, addonNames, className = '' }) {
   const local = !source && !String(track.file_path || '').startsWith('ghost://')
   if (local) return null
   const description = mobileCatalog
-    ? 'In mobile catalogue · playback resolved using this PC’s configured sources'
+    ? 'Streamed from paired Lokal Mobile over your local network'
     : mobileHistory ? 'Played on Lokal Mobile · audio not stored on this PC'
     : label ? `${stream ? 'Streamed' : 'Downloaded'} from ${label}${stream ? ' · not in your library yet' : ''}`
     : 'Source unknown'
