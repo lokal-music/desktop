@@ -1042,19 +1042,27 @@ function registerStreamProtocol(protocol, net) {
         const link = require('../link').getLink()
         if (!link) return new Response('Phone Link is unavailable', { status: 503 })
         const userId = link.store.currentUser()
-        const row = getDB().prepare('SELECT device_id FROM link_mobile_catalog WHERE user_id=? AND track_id=? ORDER BY updated_at DESC LIMIT 1').get(userId, id)
-        if (!row) return new Response('Phone song is no longer linked', { status: 404 })
-        const granted = await link.commandDevice(row.device_id, {
-          action: 'requestMobileStream', value: { trackId: id },
-        })
-        const source = String(granted?.url || '')
-        let media
-        try { media = new URL(source) } catch { media = null }
-        if (!granted?.ok || !media || media.protocol !== 'http:' ||
-            !require('../server/apiKey').isLocalAddress(media.hostname) ||
-            !/^\\/[a-f0-9]{48}$/.test(media.pathname)) {
-          return new Response('Phone could not provide this audio stream', { status: 503 })
+        const rows = getDB().prepare('SELECT device_id FROM link_mobile_catalog WHERE user_id=? AND track_id=? ORDER BY updated_at DESC').all(userId, id)
+        if (!rows.length) return new Response('Phone song is no longer linked', { status: 404 })
+        const connected = new Set(link.devices().filter(device => device.connected).map(device => device.id))
+        let media = null
+        for (const row of rows) {
+          if (!connected.has(row.device_id)) continue
+          const granted = await link.commandDevice(row.device_id, {
+            action: 'requestMobileStream', value: { trackId: id },
+          })
+          const source = String(granted?.url || '')
+          try {
+            const candidate = new URL(source)
+            if (granted?.ok && candidate.protocol === 'http:' &&
+                require('../server/apiKey').isLocalAddress(candidate.hostname) &&
+                /^\\/[a-f0-9]{48}$/.test(candidate.pathname)) {
+              media = candidate
+              break
+            }
+          } catch {}
         }
+        if (!media) return new Response('No paired phone currently provides this song', { status: 503 })
         const headers = new Headers()
         const range = request.headers.get('Range')
         if (range && /^bytes=\\d*-\\d*$/.test(range)) headers.set('Range', range)
