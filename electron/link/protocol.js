@@ -1,6 +1,6 @@
 const { randomUUID } = require('crypto')
 const VERSION = 1
-const TYPES = new Set(['hello', 'state', 'command', 'ack', 'queue', 'theme', 'history.push', 'history.pull', 'history.events', 'library.push', 'library.pull', 'library.ops', 'bye'])
+const TYPES = new Set(['hello', 'state', 'command', 'ack', 'queue', 'theme', 'history.push', 'history.pull', 'history.events', 'library.push', 'library.pull', 'library.ops', 'catalog.push', 'bye'])
 const MAX_BATCH = 250
 function envelope(type, body = {}, id = randomUUID()) {
   if (!TYPES.has(type)) throw new Error('Unsupported link message')
