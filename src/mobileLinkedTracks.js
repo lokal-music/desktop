@@ -22,6 +22,7 @@ export async function resolveMobileLinkedTracks(tracks, client = api, options = 
       const candidate = {
         title: track.title, artist: track.artist, album: track.album,
         duration: track.duration, artwork_url: track.artwork_url,
+        isrc: track.isrc, year: track.year, genre: track.genre,
       }
       try {
         const [found] = await resolve([candidate], client, {
