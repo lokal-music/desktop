@@ -1037,6 +1037,41 @@ function registerStreamProtocol(protocol, net) {
           ? new Response(picture.bytes, { status: 200, headers: { 'content-type': picture.mime, 'cache-control': 'private, max-age=3600' } })
           : new Response('No full artwork', { status: 404 })
       }
+      if (provider === 'mobile') {
+        if (!/^[a-zA-Z0-9_-]{1,128}$/.test(id)) return new Response('Invalid mobile track', { status: 400 })
+        const link = require('../link').getLink()
+        if (!link) return new Response('Phone Link is unavailable', { status: 503 })
+        const userId = link.store.currentUser()
+        const row = getDB().prepare('SELECT device_id FROM link_mobile_catalog WHERE user_id=? AND track_id=? ORDER BY updated_at DESC LIMIT 1').get(userId, id)
+        if (!row) return new Response('Phone song is no longer linked', { status: 404 })
+        const granted = await link.commandDevice(row.device_id, {
+          action: 'requestMobileStream', value: { trackId: id },
+        })
+        const source = String(granted?.url || '')
+        let media
+        try { media = new URL(source) } catch { media = null }
+        if (!granted?.ok || !media || media.protocol !== 'http:' ||
+            !require('../server/apiKey').isLocalAddress(media.hostname) ||
+            !/^\\/[a-f0-9]{48}$/.test(media.pathname)) {
+          return new Response('Phone could not provide this audio stream', { status: 503 })
+        }
+        const headers = new Headers()
+        const range = request.headers.get('Range')
+        if (range && /^bytes=\\d*-\\d*$/.test(range)) headers.set('Range', range)
+        const upstream = await net.fetch(media.toString(), {
+          method: request.method === 'HEAD' ? 'HEAD' : 'GET',
+          headers, signal: request.signal,
+        })
+        const forwarded = new Headers()
+        for (const name of ['content-type', 'content-length', 'content-range', 'accept-ranges']) {
+          const value = upstream.headers.get(name)
+          if (value) forwarded.set(name, value)
+        }
+        return new Response(request.method === 'HEAD' ? null : upstream.body, {
+          status: [200, 206, 416].includes(upstream.status) ? upstream.status : 502,
+          headers: forwarded,
+        })
+      }
       if (provider === 'yt' && accountSession) await accountSession.credentials()
       if (provider === 'ytv') {
         // The player asking why the video's stream failed.
