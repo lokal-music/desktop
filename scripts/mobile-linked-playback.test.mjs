@@ -115,17 +115,17 @@ test('mobile likes use desktop provider priority and retain likes, history and p
   } finally { fixture.db.close() }
 })
 
-test('mobile-only catalogue rows are metadata ghosts resolved by this PC, never phone streams', async () => {
+test('mobile-only catalogue rows play from the paired phone without provider substitution', async () => {
   const fixture = database()
   try {
-    const catalogue = { ...mobile, file_path: 'ghost://mobile/link_phone' }
+    const catalogue = { ...mobile, id: 'link_phone', file_path: 'ghost://mobile/link_phone' }
     assert.equal(isMobileLinkedTrack(catalogue), true)
-    assert.equal(isPlayable(catalogue), false)
-    assert.equal(streamRef(catalogue), null, 'there is no direct phone audio URL')
+    assert.equal(isPlayable(catalogue), true)
+    assert.deepEqual(streamRef(catalogue), { provider: 'mobile', id: 'link_phone' })
     const c = client(fixture)
     const [found] = await resolveMobileLinkedTracks([catalogue], c, { prepareStreams: false })
-    assert.equal(found.id, stream.id)
-    assert.deepEqual(c.searched, [addon], 'resolution follows the PC configured provider order')
+    assert.equal(found.id, catalogue.id)
+    assert.deepEqual(c.searched, [], 'direct phone playback does not search PC providers')
   } finally { fixture.db.close() }
 })
 
