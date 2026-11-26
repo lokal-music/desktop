@@ -31,6 +31,9 @@ test('mobile catalogue skips recordings already present on desktop and stores pl
     db.prepare(`INSERT INTO tracks
       (id,file_path,file_hash,title,artist,album,duration,download_source)
       VALUES (?,?,?,?,?,?,?,NULL)`).run('local-1', '/music/Already Here.flac', 'local-hash', 'Already Here', 'Artist A', 'Album', 201)
+    db.prepare(\`INSERT INTO tracks
+      (id,file_path,file_hash,title,artist,album,duration,download_source)
+      VALUES (?,?,?,?,?,?,?,?)\`).run('history-ghost', 'ghost://link/old-history', 'history-hash', 'Previously Played', 'Artist C', 'Old Album', 222, 'mobile')
     const snapshot = 'snapshot_12345678'
     const device = 'phone_device_123'
     store.beginMobileCatalog({ device_id: device, snapshot_id: snapshot }, 'owner', device)
@@ -45,15 +48,23 @@ test('mobile catalogue skips recordings already present on desktop and stores pl
         album: 'Phone Album', duration: 183,
         stream_url: 'http://192.168.1.50:45678/another-token',
       },
+      {
+        song_id: 'song_003', title: 'Previously Played', artist: 'Artist C',
+        album: 'Old Album', duration: 222,
+        stream_url: 'http://192.168.1.50:45678/third-token',
+      },
     ], { device_id: device, snapshot_id: snapshot }, 'owner', device)
-    assert.equal(accepted, 1)
+    assert.equal(accepted, 2)
     const phone = db.prepare("SELECT * FROM tracks WHERE file_path LIKE 'ghost://mobile/%'").get()
     assert.equal(phone.title, 'Phone Only')
     assert.equal(phone.download_source, 'mobile')
     assert.equal(db.prepare('SELECT stream_url FROM link_mobile_catalog WHERE track_id=?').get(phone.id).stream_url,
       'http://192.168.1.50:45678/another-token')
     assert.equal(db.prepare("SELECT COUNT(*) AS n FROM tracks WHERE title='Already Here'").get().n, 1)
-    store.finishMobileCatalog({ device_id: device, snapshot_id: snapshot, count: 2 }, 'owner', device)
+    const reused = db.prepare("SELECT * FROM tracks WHERE id='history-ghost'").get()
+    assert.ok(reused.file_path.startsWith('ghost://mobile/'))
+    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM link_mobile_catalog WHERE track_id=?').get('history-ghost').n, 1)
+    store.finishMobileCatalog({ device_id: device, snapshot_id: snapshot, count: 3 }, 'owner', device)
   } finally {
     db.close()
   }
