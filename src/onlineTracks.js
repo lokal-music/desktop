@@ -87,6 +87,7 @@ export function loadAddonNames() {
 /** "YouTube", "SoundCloud", an addon's name, "Soulseek", "Web"; null for the music folder's own files. */
 export function downloadSourceLabel(source, names = {}) {
   if (!source) return null
+  if (source === 'mobile') return 'Mobile'
   return DOWNLOAD_SOURCE_LABELS[source] || (isAddonProvider(source) ? (names[source] || 'Addon') : null)
 }
 
