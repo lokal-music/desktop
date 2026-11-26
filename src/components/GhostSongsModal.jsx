@@ -60,6 +60,7 @@ export default function GhostSongsModal({ open, onClose, ghostTracks, playlistId
   const [status, setStatus] = useState('')
   const [startingId, setStartingId] = useState('')
   const [downloadingAll, setDownloadingAll] = useState(false)
+  const [matchingAll, setMatchingAll] = useState(false)
   const sequence = useRef(0)
   const order = useRef([])
 
@@ -149,6 +150,34 @@ export default function GhostSongsModal({ open, onClose, ghostTracks, playlistId
     finally { setStartingId('') }
   }
 
+  const matchAllInLibrary = async () => {
+    if (matchingAll || !ghostTracks.length || typeof api.findOwnedTracks !== 'function') return
+    setMatchingAll(true)
+    setStatus(t('Matching against your library…'))
+    try {
+      const owned = await api.findOwnedTracks(ghostTracks)
+      let matched = 0
+      for (let i = 0; i < ghostTracks.length; i++) {
+        const target = owned?.[i]
+        if (!target?.id) continue
+        const res = await api.resolveGhostTrack(ghostTracks[i].id, target.id, { requireMetadataMatch: true, dedupePlaylist: true }).catch(() => null)
+        if (res?.ok) matched++
+      }
+      if (matched > 0) {
+        onChanged?.()
+        window.dispatchEvent(new Event('lokal:refresh'))
+        window.dispatchEvent(new CustomEvent('lokal:playlist-updated', { detail: { playlistId } }))
+        setStatus(`Matched ${matched} ${matched === 1 ? 'song' : 'songs'} from your library.`)
+      } else {
+        setStatus(t('No automatic library matches found. Assign individual songs below.'))
+      }
+    } catch (e) {
+      setStatus('Library match failed: ' + e.message)
+    } finally {
+      setMatchingAll(false)
+    }
+  }
+
   const downloadAll = async () => {
     if (downloadingAll || !ghostTracks.length) return
     setDownloadingAll(true)
@@ -174,13 +203,20 @@ export default function GhostSongsModal({ open, onClose, ghostTracks, playlistId
       {/* One height whatever the lists hold; the lists scroll inside it. */}
       <div className="grid h-[min(38rem,calc(100vh-11rem))] gap-4 md:grid-cols-[260px_1fr]">
         <div className="flex min-h-0 flex-col overflow-hidden rounded-2xl border border-border bg-card/40">
-          <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
             <p className="min-w-0 truncate whitespace-nowrap text-xs font-display uppercase tracking-[0.18em] text-muted">Unresolved · {ghostTracks.length}</p>
-            <button type="button" onClick={downloadAll} disabled={downloadingAll || !ghostTracks.length}
-              title={t("Find and download every unresolved song")} aria-label={t("Download all unresolved songs")}
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-accent/25 bg-accent/15 px-2.5 py-1.5 text-xs text-accent transition-colors hover:bg-accent/25 disabled:cursor-wait disabled:opacity-50">
-              {downloadingAll ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />} {downloadingAll ? 'Finding…' : 'Download all'}
-            </button>
+            <div className="flex items-center gap-1.5">
+              <button type="button" onClick={matchAllInLibrary} disabled={matchingAll || !ghostTracks.length}
+                title={t("Automatically map every song already in your library")} aria-label={t("Match all in library")}
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border bg-elevated px-2.5 py-1.5 text-xs text-white transition-colors hover:border-accent/40 hover:text-accent disabled:cursor-wait disabled:opacity-50">
+                {matchingAll ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} {matchingAll ? 'Matching…' : 'Match library'}
+              </button>
+              <button type="button" onClick={downloadAll} disabled={downloadingAll || !ghostTracks.length}
+                title={t("Find and download every unresolved song")} aria-label={t("Download all unresolved songs")}
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-accent/25 bg-accent/15 px-2.5 py-1.5 text-xs text-accent transition-colors hover:bg-accent/25 disabled:cursor-wait disabled:opacity-50">
+                {downloadingAll ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />} {downloadingAll ? 'Finding…' : 'Download all'}
+              </button>
+            </div>
           </div>
           <div className="min-h-0 flex-1 divide-y divide-border overflow-y-auto">
             {ghostTracks.map(track => {

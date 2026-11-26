@@ -126,7 +126,7 @@ test('not found, failed downloads and streamed ghosts are told apart', async () 
     client: c, save: async (track, extra) => { saved.push([track.id, extra?.replaceImported]); return track.id === 'yt-bbbbbbbbbbb' ? { alreadyInLibrary: true } : { error: 'no' } },
   })
   assert.deepEqual(result, { started: 0, existing: 1, failed: 1, notFound: 1 })
-  assert.deepEqual(saved.sort(), [['yt-aaaaaaaaaa2', ['g2']], ['yt-bbbbbbbbbbb', undefined]])
+  assert.deepEqual(saved.sort(), [['yt-aaaaaaaaaa2', ['g2']], ['yt-bbbbbbbbbbb', ['yt-bbbbbbbbbbb']]])
   assert.equal(ghostDownloadMessage(result), '1 already in your library; 1 not found on your playback sources; 1 unavailable')
 })
 
