@@ -26,6 +26,24 @@ function mergeNow(db, keepId, loser) {
         db.prepare('DELETE FROM playlist_tracks WHERE id=?').run(row.id)
       }
     }
+    if (name === 'link_mobile_catalog') {
+      // The table's (user, device, track_key) primary key can already point
+      // at the keeper. Move non-conflicting phone associations before the
+      // generic cleanup below; otherwise UPDATE OR IGNORE would silently
+      // skip them and DELETE would erase the loser's Mobile membership.
+      db.prepare(`
+        UPDATE link_mobile_catalog AS mobile
+        SET track_id=?
+        WHERE track_id=?
+          AND NOT EXISTS (
+            SELECT 1 FROM link_mobile_catalog AS current
+            WHERE current.user_id=mobile.user_id
+              AND current.device_id=mobile.device_id
+              AND current.track_key=mobile.track_key
+              AND current.track_id=?
+          )
+      `).run(keepId, loser.id, keepId)
+    }
     if (!['artist_track_links', 'artist_link_locks'].includes(name)) {
       db.prepare(`UPDATE OR IGNORE ${quoted} SET track_id=? WHERE track_id=?`).run(keepId, loser.id)
     }
