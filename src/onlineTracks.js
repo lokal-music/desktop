@@ -6,7 +6,7 @@
 import { api } from './api.js'
 import { downloadBatchCurrent } from './downloadCancellation.js'
 
-export const PROVIDER_LABELS = { yt: 'YouTube', sc: 'SoundCloud', mono: 'Monochrome' }
+export const PROVIDER_LABELS = { yt: 'YouTube', sc: 'SoundCloud', mono: 'Monochrome', mobile: 'Mobile' }
 
 /** Is `provider` a user-installed addon ("a-<key>")? */
 export function isAddonProvider(provider) {
@@ -26,6 +26,8 @@ export function isGhostTrack(track) {
 /** Where a ghost track can be streamed from: { provider: 'yt' | 'sc', id }, or null. */
 export function streamRef(track) {
   const path = String(track?.file_path || '')
+  const fromMobile = path.match(/^ghost:\/\/mobile\/[a-zA-Z0-9_-]{8,128}\/[a-zA-Z0-9_-]{1,128}$/)
+  if (fromMobile) return { provider: 'mobile', id: String(track.id) }
   const fromAddon = path.match(/^ghost:\/\/addon\/([0-9a-f]{10})\/(.+)$/)
   if (fromAddon) {
     try { return { provider: `a-${fromAddon[1]}`, id: decodeURIComponent(fromAddon[2]) } } catch { return null }
@@ -124,6 +126,7 @@ export function audioSrcFor(track) {
 export function downloadUrlFor(track) {
   const ref = streamRef(track)
   if (!ref || isAddonProvider(ref.provider)) return null // addons: resolved when saving
+  if (ref.provider === 'mobile') return null
   if (ref.provider === 'mono') return /^\d{15,20}$/.test(ref.id) ? `https://tracks.monochrome.st/track/${ref.id}` : null
   return ref.provider === 'sc' ? `https://api.soundcloud.com/tracks/${ref.id}` : `https://music.youtube.com/watch?v=${ref.id}`
 }
