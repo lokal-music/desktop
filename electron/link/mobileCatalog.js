@@ -58,7 +58,7 @@ function createMobileCatalog(db, store) {
           ? existing : store.ensureTrack(fields, fields.track_key)
         if (!track) continue
         if (String(track.file_path || '').startsWith('ghost://link/')) {
-          db.prepare("UPDATE tracks SET download_source='mobile' WHERE id=?").run(track.id)
+          db.prepare("UPDATE tracks SET file_path=?, download_source='mobile' WHERE id=?").run('ghost://mobile/' + track.id, track.id)
         }
         insert.run(userId, deviceId, fields.track_key, track.id, snapshotId, now)
       }
