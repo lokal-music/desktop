@@ -1456,7 +1456,7 @@ function registerScannerHandlers(ipcMain) {
       const match = wordsMatch(search, TRACK_COLUMNS)
       if (match) { where.push(match.sql); params.push(...match.params) }
     }
-    const source = sourceFilter(opts.source)
+    const source = sourceFilter(opts.source, require('./remote').getRemoteState().userId || 'guest', db)
     if (source) { where.push(source.sql); params.push(...source.params) }
     const genre = genreFilter(opts.genre)
     if (genre) { where.push(genre.sql); params.push(...genre.params) }
