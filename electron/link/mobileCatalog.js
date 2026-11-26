@@ -65,8 +65,19 @@ function createMobileCatalog(db, store) {
       if (page === pages - 1 && body.complete) {
         // Only prune after the final page. An interrupted snapshot therefore
         // cannot make previously published phone songs disappear.
+        const stale = db.prepare('SELECT track_id FROM link_mobile_catalog WHERE user_id=? AND device_id=? AND snapshot_id<>?')
+          .all(userId, deviceId, snapshotId)
         db.prepare('DELETE FROM link_mobile_catalog WHERE user_id=? AND device_id=? AND snapshot_id<>?')
           .run(userId, deviceId, snapshotId)
+        for (const { track_id: trackId } of stale) {
+          const retained = db.prepare('SELECT 1 FROM link_mobile_catalog WHERE user_id=? AND track_id=? LIMIT 1').get(userId, trackId)
+          if (retained) continue
+          const track = db.prepare('SELECT file_path FROM tracks WHERE id=?').get(trackId)
+          if (String(track?.file_path || '') === 'ghost://mobile/' + trackId) {
+            db.prepare("UPDATE tracks SET file_path=?,download_source=NULL WHERE id=?")
+              .run('ghost://link/' + trackId, trackId)
+          }
+        }
       }
       return items.length
     })()
