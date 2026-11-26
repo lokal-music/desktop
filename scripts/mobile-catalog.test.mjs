@@ -85,8 +85,9 @@ test('only a complete snapshot retires songs removed from the phone', () => {
 
 test('new phone catalogue rows are playable through the Mobile stream provider', async () => {
   const { streamRef, isPlayable, audioSrcFor } = await import('../src/onlineTracks.js')
+  const { api } = await import('../src/api.js')
   const track = { id: 'link_phone', file_path: 'ghost://mobile/link_phone', title: song.title, artist: song.artist }
   assert.deepEqual(streamRef(track), { provider: 'mobile', id: 'link_phone' })
   assert.equal(isPlayable(track), true)
-  assert.equal(audioSrcFor(track), 'lokal-stream://mobile/link_phone')
+  assert.equal(audioSrcFor(track), api.onlineStreamURL('mobile', 'link_phone'))
 })
