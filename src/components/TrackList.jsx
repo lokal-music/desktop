@@ -1047,8 +1047,9 @@ export default function TrackList({ tracks = [], showQuality = false, onRemove =
                       ? 'Played on Lokal Mobile; original audio is not on this PC'
                       : t('Ghost song')}
                     className="px-1.5 py-0.5 rounded-full bg-yellow-400/10 border border-yellow-400/20 text-[10px] leading-[14px] uppercase tracking-wide text-yellow-200 flex-shrink-0"
-                  >{String(track.file_path || '').startsWith('ghost://link/')
-                      ? t('Mobile history') : t('Ghost')}</span>}
+                  >{String(track.file_path || '').startsWith('ghost://mobile/')
+                      ? t('Mobile') : String(track.file_path || '').startsWith('ghost://link/')
+                        ? t('Mobile history') : t('Ghost')}</span>}
                   {!isMissing && track.playback_error && (track.playback_error === 'FFMPEG_MISSING'
                     ? <button type="button" onClick={e => { e.stopPropagation(); setFfmpegPromptTrack(track); setFfmpegPromptError('') }}
                         title={t('Click to download FFmpeg and retry playback.')}
