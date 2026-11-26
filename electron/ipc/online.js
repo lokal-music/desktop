@@ -1037,6 +1037,25 @@ function registerStreamProtocol(protocol, net) {
           ? new Response(picture.bytes, { status: 200, headers: { 'content-type': picture.mime, 'cache-control': 'private, max-age=3600' } })
           : new Response('No full artwork', { status: 404 })
       }
+      if (provider === 'mobile') {
+        const source = getDB().prepare(
+          'SELECT stream_url FROM link_mobile_catalog WHERE track_id = ?'
+        ).get(id)?.stream_url
+        if (!source) return new Response('Phone track is unavailable. Reconnect and sync the mobile library.', { status: 404 })
+        const headers = {}
+        const range = request.headers.get('Range')
+        if (range && /^bytes=\\d*-\\d*$/.test(range)) headers.Range = range
+        const response = await net.fetch(source, { method: request.method === 'HEAD' ? 'HEAD' : 'GET', headers })
+        const forwarded = new Headers()
+        for (const name of ['content-type', 'content-length', 'content-range', 'accept-ranges']) {
+          const value = response.headers.get(name)
+          if (value) forwarded.set(name, value)
+        }
+        return new Response(request.method === 'HEAD' ? null : response.body, {
+          status: response.status,
+          headers: forwarded,
+        })
+      }
       if (provider === 'yt' && accountSession) await accountSession.credentials()
       if (provider === 'ytv') {
         // The player asking why the video's stream failed.
