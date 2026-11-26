@@ -270,7 +270,7 @@ class LinkStore {
       let accepted = 0
       for (const item of items) {
         if (!item || typeof item.song_id !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(item.song_id) ||
-            !text(item.title, 500) || !text(item.artist, 500) ||
+            !text(item.title, 500) ||
             !Number.isFinite(Number(item.duration)) || Number(item.duration) <= 0 ||
             typeof item.stream_url !== 'string' || item.stream_url.length > 2048) throw new Error('Invalid mobile catalogue track')
         let url
@@ -285,7 +285,7 @@ class LinkStore {
         if (url.protocol !== 'http:' || !privateV4 || !url.pathname.startsWith('/') || !/^[A-Za-z0-9_-]{20,64}$/.test(url.pathname.slice(1)) || !url.port || url.username || url.password || url.search || url.hash)
           throw new Error('Mobile stream must use a private LAN address')
         const fields = {
-          title: text(item.title, 500), artist: text(item.artist, 500),
+          title: text(item.title, 500), artist: text(item.artist, 500) || 'Unknown artist',
           album: text(item.album, 500), album_artist: text(item.album_artist, 500),
           duration: Number(item.duration),
         }
@@ -312,6 +312,7 @@ class LinkStore {
         }
         if (!track) continue
         if (String(track.file_path || '').startsWith('ghost://mobile/')) {
+          this.db.prepare('DELETE FROM link_mobile_catalog WHERE track_id=?').run(track.id)
           this.db.prepare(`INSERT OR REPLACE INTO link_mobile_catalog
             (user_id,device_id,song_id,track_id,stream_url,snapshot_id,updated_at)
             VALUES (?,?,?,?,?,?,?)`).run(userId, deviceId, item.song_id, track.id, url.toString(), snapshot, this.now())
