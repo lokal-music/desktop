@@ -6,6 +6,7 @@ const { LinkStore, safeEqual } = require('./store')
 const { installCapture } = require('./capture')
 const { reconcilePlaylists, savePlaylistSnapshot } = require('./reconcile')
 const { createLinkedLibraryRefresh } = require('./libraryRefresh')
+const { createMobileCatalog } = require('./mobileCatalog')
 const { envelope, decode, text } = require('./protocol')
 const { advertise, reconcileDiscovery } = require('./discovery')
 const { createPendingCommands } = require('./pendingCommands')
@@ -19,6 +20,7 @@ function createLink({ server, db, remote, enabled = () => true, advertiseDesktop
   store.currentUser = currentUser
   installCapture(store, currentUser)
   const libraryRefresh = createLinkedLibraryRefresh()
+  const mobileCatalog = createMobileCatalog(db, store)
   const sockets = new Map(), pending = createPendingCommands(), snapshots = new Map()
   const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 })
   let stopDiscovery
@@ -120,6 +122,12 @@ function createLink({ server, db, remote, enabled = () => true, advertiseDesktop
             libraryRefresh.accepted(0, store.takeVideoClipChanges())
             send(socket,'library.ops',store.pull('library_ops',device.user_id,body.cursor,{trackLifecycle:socket.capabilities?.has('track_lifecycle')||body.trackLifecycle===true}),message.id)
             break
+          case 'catalog.push': {
+            if (device.legacy) throw new Error('Pair this device before syncing')
+            const result = mobileCatalog.accept({ userId: device.user_id, deviceId: device.id, body })
+            send(socket, 'ack', { ok: true, ...result }, message.id)
+            break
+          }
           case 'library.push': {
             if (device.legacy) throw new Error('Pair this device before syncing')
             // Capture desktop changes before applying phone edits. Snapshot the
