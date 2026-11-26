@@ -272,7 +272,7 @@ class LinkStore {
         if (!item || typeof item.song_id !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(item.song_id) ||
             !text(item.title, 500) || !text(item.artist, 500) ||
             !Number.isFinite(Number(item.duration)) || Number(item.duration) <= 0 ||
-            typeof item.stream_url !== 'string') throw new Error('Invalid mobile catalogue track')
+            typeof item.stream_url !== 'string' || item.stream_url.length > 2048) throw new Error('Invalid mobile catalogue track')
         let url
         try { url = new URL(item.stream_url) } catch { throw new Error('Invalid mobile stream address') }
         const ip = require('net').isIP(url.hostname)
@@ -282,7 +282,7 @@ class LinkStore {
           octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31 ||
           octets[0] === 169 && octets[1] === 254
         )
-        if (url.protocol !== 'http:' || !privateV4 || url.username || url.password || url.search || url.hash)
+        if (url.protocol !== 'http:' || !privateV4 || !/^\\/[A-Za-z0-9_-]{20,64}$/.test(url.pathname) || !url.port || url.username || url.password || url.search || url.hash)
           throw new Error('Mobile stream must use a private LAN address')
         const fields = {
           title: text(item.title, 500), artist: text(item.artist, 500),
