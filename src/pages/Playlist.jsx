@@ -101,10 +101,9 @@ export default function Playlist() {
 
   // Online songs are ghost tracks too, but they stream, so they play.
   const playableTracks = useMemo(() => sortedTracks.filter(track => isPlayable(track) || isMobileLinkedTrack(track)), [sortedTracks])
-  // Songs to resolve: entries with nothing to play (an import that found no
-  // file). Streamed songs (a saved YouTube Music mix...) are ghost rows too,
-  // but they play, so they aren't missing anything.
-  const ghostTracks = useMemo(() => tracks.filter(track => String(track.file_path || '').startsWith('ghost://') && !isPlayable(track)), [tracks])
+  // Songs to resolve: any ghost entry in this playlist not yet backed by a
+  // local library file (both unlinked imports and online/streamed ghosts).
+  const ghostTracks = useMemo(() => tracks.filter(track => String(track.file_path || '').startsWith('ghost://')), [tracks])
 
   // A smart playlist fills itself from its rules: no adding, removing or reordering by hand.
   const smart = !isLiked && !!playlist?.smart_rules

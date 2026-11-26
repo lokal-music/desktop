@@ -20,7 +20,7 @@ const safeEqual = (a, b) => { const aa = Buffer.from(String(a)), bb = Buffer.fro
 class LinkStore {
   constructor(db, { now = Date.now } = {}) {
     this.db = db
-    db.function('link_normalize', value => String(value || '').toLowerCase().replace(/\s+/g,' ').trim())
+    db.function('link_normalize', value => String(value || '').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{M}\p{N}]+/gu, ' ').trim())
     this.now = now
     this.clock = ''
     this.pairing = null

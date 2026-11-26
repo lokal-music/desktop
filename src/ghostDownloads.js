@@ -62,6 +62,7 @@ export async function downloadGhostSongs(ghosts, { client = api, save = saveToLi
       // A streamed song (YouTube, SoundCloud, an addon) already has its source.
       if (streamRef(ghost)) {
         tally(await save(ghost, {
+          replaceImported: [ghost.id],
           isCurrent,
           tags: {
             title: ghost.title || undefined,

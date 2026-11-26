@@ -1836,7 +1836,7 @@ export default function App() {
       if (action === 'queueFromMetadata') {
         const wanted=command.value?.track;if(!wanted)return {error:'No track was supplied'};
         const result=await api.getTracks({limit:100000,includeGhosts:'1'});const rows=(Array.isArray(result)?result:result?.items||[]).filter(track=>!String(track.file_path||'').startsWith('ghost://'));
-        const norm=v=>String(v||'').trim().toLowerCase().replace(/\s+/g,' ');
+        const norm=v=>String(v||'').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{M}\p{N}]+/gu,' ').trim();
         const track=rows.find(t=>wanted.file_hash&&t.file_hash===wanted.file_hash)||rows.find(t=>norm(t.artist)===norm(wanted.artist)&&norm(t.title)===norm(wanted.title)&&Math.abs(Number(t.duration||0)-Number(wanted.duration||0))<=2);
         if(!track)return {error:'This track is not available on the desktop'};state.addToQueue(track);return {ok:true}
       }
@@ -1860,7 +1860,7 @@ export default function App() {
         if (!Array.isArray(handoff.queue) || !handoff.queue.length || handoff.queue.length > 5000 || !Number.isInteger(handoff.index) || handoff.index < 0 || handoff.index >= handoff.queue.length) return {error:'Invalid handoff queue'}
         const all = await api.getTracks({ limit: 100000, includeGhosts: '1' })
         const library = (Array.isArray(all) ? all : all?.items || []).filter(track=>!String(track.file_path||'').startsWith('ghost://'))
-        const norm = value => String(value || '').toLowerCase().trim().replace(/\s+/g,' ')
+        const norm = value => String(value || '').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{M}\p{N}]+/gu,' ').trim()
         const resolve = entry => library.find(track => entry.file_hash && track.file_hash===entry.file_hash) || library.find(track=>norm(track.artist)===norm(entry.artist)&&norm(track.title)===norm(entry.title)&&Math.abs(Number(track.duration||0)-Number(entry.duration||0))<=2)
         const queue=handoff.queue.map(resolve)
         if(queue.some(track=>!track))return {error:'Some songs are not available on this desktop. Download them here before handing off.'}
