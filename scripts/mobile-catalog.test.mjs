@@ -83,11 +83,13 @@ test('only a complete snapshot retires songs removed from the phone', () => {
   } finally { f.db.close() }
 })
 
-test('new phone catalogue rows enter the existing mobile-provider resolution flow', async () => {
+test('new phone catalogue rows expose the authenticated Mobile stream source', async () => {
   const { isMobileLinkedTrack } = await import('../src/mobileLinkedTracks.js')
-  const { isPlayable, streamRef } = await import('../src/onlineTracks.js')
+  const { isPlayable, streamRef, audioSrcFor } = await import('../src/onlineTracks.js')
+  const { api } = await import('../src/api.js')
   const track = { id: 'link_phone', file_path: 'ghost://mobile/link_phone', title: song.title, artist: song.artist }
   assert.equal(isMobileLinkedTrack(track), true)
-  assert.equal(isPlayable(track), false, 'metadata is not mistaken for a local audio file')
-  assert.equal(streamRef(track), null, 'the phone source is resolved through this PC, not an exposed file URL')
+  assert.equal(isPlayable(track), true)
+  assert.deepEqual(streamRef(track), { provider: 'mobile', id: 'link_phone' })
+  assert.equal(audioSrcFor(track), api.onlineStreamURL('mobile', 'link_phone'))
 })
