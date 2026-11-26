@@ -498,7 +498,7 @@ router.get('/', (req, res) => {
   if (id) { where.push('id = ?'); params.push(id) }
   if (artistName) { where.push('artist = ?'); params.push(artistName) }
   if (artistId) { where.push('id IN (SELECT track_id FROM artist_track_links WHERE artist_id = ?)'); params.push(artistId) }
-  const sourceWhere = require('../../electron/ipc/scanner').sourceFilter(source)
+  const sourceWhere = require('../../electron/ipc/scanner').sourceFilter(source, require('../../electron/ipc/remote').getRemoteState().userId || 'guest', db)
   if (sourceWhere) { where.push(sourceWhere.sql); params.push(...sourceWhere.params) }
   const genreWhere = require('../../electron/ipc/scanner').genreFilter(typeof genre === 'string' ? genre : '')
   if (genreWhere) { where.push(genreWhere.sql); params.push(...genreWhere.params) }
