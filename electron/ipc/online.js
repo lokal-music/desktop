@@ -1056,7 +1056,7 @@ function registerStreamProtocol(protocol, net) {
             const candidate = new URL(source)
             if (granted?.ok && candidate.protocol === 'http:' &&
                 require('../server/apiKey').isLocalAddress(candidate.hostname) &&
-                /^\\/[a-f0-9]{48}$/.test(candidate.pathname)) {
+                /^\/[a-f0-9]{48}$/.test(candidate.pathname)) {
               media = candidate
               break
             }
@@ -1065,7 +1065,7 @@ function registerStreamProtocol(protocol, net) {
         if (!media) return new Response('No paired phone currently provides this song', { status: 503 })
         const headers = new Headers()
         const range = request.headers.get('Range')
-        if (range && /^bytes=\\d*-\\d*$/.test(range)) headers.set('Range', range)
+        if (range && /^bytes=\d*-\d*$/.test(range)) headers.set('Range', range)
         const upstream = await net.fetch(media.toString(), {
           method: request.method === 'HEAD' ? 'HEAD' : 'GET',
           headers, signal: request.signal,
