@@ -6,7 +6,7 @@
 import { api } from './api.js'
 import { downloadBatchCurrent } from './downloadCancellation.js'
 
-export const PROVIDER_LABELS = { yt: 'YouTube', sc: 'SoundCloud', mono: 'Monochrome', mobile: 'Mobile' }
+export const PROVIDER_LABELS = { yt: 'YouTube', sc: 'SoundCloud', mono: 'Monochrome' }
 
 /** Is `provider` a user-installed addon ("a-<key>")? */
 export function isAddonProvider(provider) {
@@ -26,8 +26,6 @@ export function isGhostTrack(track) {
 /** Where a ghost track can be streamed from: { provider: 'yt' | 'sc', id }, or null. */
 export function streamRef(track) {
   const path = String(track?.file_path || '')
-  const mobile = path.match(/^ghost:\/\/mobile\/([a-zA-Z0-9_-]+)$/)
-  if (mobile) return { provider: 'mobile', id: mobile[1] }
   const fromAddon = path.match(/^ghost:\/\/addon\/([0-9a-f]{10})\/(.+)$/)
   if (fromAddon) {
     try { return { provider: `a-${fromAddon[1]}`, id: decodeURIComponent(fromAddon[2]) } } catch { return null }
@@ -87,7 +85,6 @@ export function loadAddonNames() {
 /** "YouTube", "SoundCloud", an addon's name, "Soulseek", "Web"; null for the music folder's own files. */
 export function downloadSourceLabel(source, names = {}) {
   if (!source) return null
-  if (source === 'mobile') return 'Mobile'
   return DOWNLOAD_SOURCE_LABELS[source] || (isAddonProvider(source) ? (names[source] || 'Addon') : null)
 }
 
