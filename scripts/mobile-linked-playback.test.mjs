@@ -5,7 +5,7 @@ import vm from 'node:vm'
 import { createRequire } from 'node:module'
 import { DatabaseSync } from 'node:sqlite'
 import { resolveMobileLinkedTracks, isMobileLinkedTrack } from '../src/mobileLinkedTracks.js'
-import { isPlayable, saveToLibrary } from '../src/onlineTracks.js'
+import { isPlayable, saveToLibrary, streamRef } from '../src/onlineTracks.js'
 import { api } from '../src/api.js'
 const require = createRequire(import.meta.url)
 const { sameRecording } = require('../electron/recordingIdentity.js')
@@ -115,6 +115,20 @@ test('mobile likes use desktop provider priority and retain likes, history and p
   } finally { fixture.db.close() }
 })
 
+test('mobile-only catalogue rows are metadata ghosts resolved by this PC, never phone streams', async () => {
+  const fixture = database()
+  try {
+    const catalogue = { ...mobile, file_path: 'ghost://mobile/link_phone' }
+    assert.equal(isMobileLinkedTrack(catalogue), true)
+    assert.equal(isPlayable(catalogue), false)
+    assert.equal(streamRef(catalogue), null, 'there is no direct phone audio URL')
+    const c = client(fixture)
+    const [found] = await resolveMobileLinkedTracks([catalogue], c, { prepareStreams: false })
+    assert.equal(found.id, stream.id)
+    assert.deepEqual(c.searched, [addon], 'resolution follows the PC configured provider order')
+  } finally { fixture.db.close() }
+})
+
 test('local copies are preferred without searching online', async () => {
   const fixture = database()
   try {
@@ -137,7 +151,7 @@ test('unavailable or cancelled desktop lookup never erases the mobile like', asy
       const rows = await resolveMobileLinkedTracks([mobile], c, {
         isCurrent: () => current,
         resolve: async candidates => {
-          assert.deepEqual(Object.keys(candidates[0]).sort(), ['album', 'artist', 'artwork_url', 'duration', 'title'])
+          assert.deepEqual(Object.keys(candidates[0]).sort(), ['album', 'artist', 'artwork_url', 'duration', 'genre', 'isrc', 'title', 'year'])
           if (cancelled) current = false
           return cancelled ? [stream] : []
         },
