@@ -73,17 +73,21 @@ export default function SourceIcon({ source, size = 14, className = '', colored 
 
 export function TrackSourceIcon({ track, addonNames, className = '' }) {
   const stream = streamRef(track)
-  const mobileCatalog = String(track.file_path || '').startsWith('ghost://mobile/') || track.download_source === 'mobile'
+  const mobileGhost = String(track.file_path || '').startsWith('ghost://mobile/')
+  const mobileCatalog = mobileGhost || Boolean(track.mobile_catalog)
   const mobileHistory = String(track.file_path || '').startsWith('ghost://link/') && !mobileCatalog
-  const source = stream?.provider || track.download_source || (mobileHistory ? 'mobile' : null)
+  const source = stream?.provider || (mobileGhost || mobileHistory ? 'mobile' : track.download_source) || (mobileCatalog ? 'mobile' : null)
   const label = downloadSourceLabel(source, addonNames)
   const local = !source && !String(track.file_path || '').startsWith('ghost://')
   if (local) return null
-  const description = mobileCatalog
-    ? 'Streamed from paired Lokal Mobile over your local network'
-    : mobileHistory ? 'Played on Lokal Mobile · audio not stored on this PC'
-    : label ? `${stream ? 'Streamed' : 'Downloaded'} from ${label}${stream ? ' · not in your library yet' : ''}`
-    : 'Source unknown'
+  const description = mobileGhost
+    ? 'On paired Lokal Mobile · plays using this PC’s configured sources'
+    : mobileCatalog && stream
+      ? `On paired Lokal Mobile · streamed from ${label || 'configured source'}`
+      : mobileHistory ? 'Played on Lokal Mobile · audio not stored on this PC'
+      : source === 'mobile' ? 'Copied from mobile'
+      : label ? `${stream ? 'Streamed' : 'Downloaded'} from ${label}${stream ? ' · not in your library yet' : ''}`
+      : 'Source unknown'
   return (
     <span role="img" aria-label={description} title={description} className={`inline-flex shrink-0 items-center justify-center text-muted ${className}`}>
       <SourceIcon source={source} addonName={isAddonProvider(source) ? addonNames?.[source] : ''} />

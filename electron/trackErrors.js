@@ -40,7 +40,18 @@ function listTracks(db, opts, { where, params, exists }) {
   const limit = Math.max(1, Math.min(5000, parseInt(opts.limit, 10) || 500))
   const offset = Math.max(0, parseInt(opts.offset, 10) || 0)
   const errors = trackErrors(db)
-  const decorate = track => ({ ...track, missing: missingTrackFile(track, exists), ...(errors.has(String(track.id)) ? { playback_error: errors.get(String(track.id)) } : {}) })
+  let mobileCatalogIds = null
+  try {
+    if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='link_mobile_catalog'").get()) {
+      mobileCatalogIds = new Set(db.prepare('SELECT DISTINCT track_id FROM link_mobile_catalog').all().map(row => String(row.track_id)))
+    }
+  } catch {}
+  const decorate = track => ({
+    ...track,
+    missing: missingTrackFile(track, exists),
+    ...(mobileCatalogIds?.has(String(track.id)) ? { mobile_catalog: true } : {}),
+    ...(errors.has(String(track.id)) ? { playback_error: errors.get(String(track.id)) } : {}),
+  })
   const problems = truthy(opts.problems)
   const clauses = [...where]
   // Hide phone uploads only if this desktop already has the same recording.

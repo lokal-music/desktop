@@ -248,6 +248,7 @@ function initDB() {
     // told apart.
     `ALTER TABLE tracks ADD COLUMN download_source TEXT`,
     `ALTER TABLE tracks ADD COLUMN source_ref TEXT`,
+    `ALTER TABLE tracks ADD COLUMN disc_num INTEGER`,
     `CREATE INDEX IF NOT EXISTS idx_tracks_source_ref ON tracks(source_ref)`,
     // A streamed (ghost) track replaced by its file: its old id still leads
     // to the file (a player or page may still hold the old one).

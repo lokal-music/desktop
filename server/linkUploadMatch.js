@@ -5,7 +5,7 @@ const normalize = value => String(value || '').toLowerCase().replace(/\s+/g, ' '
 function findPhonePlaceholder(db, title, artist, duration) {
   const wantedTitle = normalize(title), wantedArtist = normalize(artist)
   if (!wantedTitle || !wantedArtist || !Number.isFinite(duration)) return null
-  for (const row of db.prepare("SELECT id,title,artist FROM tracks WHERE file_path LIKE 'ghost://link/%' AND abs(COALESCE(duration,0)-?)<=2 ORDER BY id").iterate(duration)) {
+  for (const row of db.prepare("SELECT id,title,artist FROM tracks WHERE (file_path LIKE 'ghost://link/%' OR file_path LIKE 'ghost://mobile/%') AND abs(COALESCE(duration,0)-?)<=2 ORDER BY id").iterate(duration)) {
     if (normalize(row.title) === wantedTitle && normalize(row.artist) === wantedArtist) return row
   }
   return null

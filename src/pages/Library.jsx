@@ -10,9 +10,21 @@ import LibraryFolderBrowser from '../components/LibraryFolderBrowser'
 import { api } from '../api'
 import { useCachedState, usePageReady } from '../pageCache'
 import { useTranslation } from '../i18n'
-import { showToast } from '../components/Toaster'
+import { showToast, showLoadingToast } from '../components/Toaster'
 import { playNextMany } from '../trackActions'
 import { fetchAllTrackPages, shuffledLibraryTracks } from '../libraryHelpers'
+import { isMobileLinkedTrack, resolveMobileLinkedTracks } from '../mobileLinkedTracks'
+import { playRecommendationPool } from '../recommendationPlayback'
+import { playbackFallbackMessage } from '../recommendations'
+
+function isVisibleLibraryTrack(track) {
+  const path = String(track?.file_path || '')
+  return Boolean(path) && (
+    !path.startsWith('ghost://') ||
+    path.startsWith('ghost://mobile/') ||
+    Boolean(track?.mobile_catalog)
+  )
+}
 
 const LIBRARY_PAGE_SIZE = 50
 const PLAYBACK_FETCH_PAGE_SIZE = 5000
@@ -139,6 +151,33 @@ export default function Library() {
     ? (simpleSearch.trim() === debouncedSimpleSearch ? tracks : [])
     : (folderData?.filteredTracks || (folderData?.tracks?.length ? folderData.tracks : folderData?.allTracks) || [])
 
+  const libraryPlayRequestRef = useRef(0)
+  useEffect(() => () => { libraryPlayRequestRef.current++ }, [])
+
+  const playLibrarySelection = async (list, selected = null) => {
+    if (!list.length) return
+    if (!list.some(isMobileLinkedTrack)) {
+      const index = selected ? Math.max(list.findIndex(item => item.id === selected.id), 0) : 0
+      playQueue(list, index, null)
+      return
+    }
+    const request = ++libraryPlayRequestRef.current
+    const isCurrent = () => request === libraryPlayRequestRef.current
+    const toast = showLoadingToast(selected ? `Finding “${selected.title}”…` : 'Finding songs on your desktop sources…')
+    let detail = ''
+    try {
+      const started = await playRecommendationPool(list, {
+        selected, firstPlayable: !selected, context: null, isCurrent,
+        resolve: (rows, options) => resolveMobileLinkedTracks(rows, api, options),
+        onProgress: message => { if (isCurrent()) toast.update(message) },
+        onProviderFailure: failure => { if (isCurrent()) { detail = failure.detail || detail; toast.update(playbackFallbackMessage(failure)) } },
+      })
+      toast.close(started === false && isCurrent() ? detail || 'No playable matches were found.' : '')
+    } catch {
+      toast.close(isCurrent() ? 'Could not resolve the selected tracks.' : '')
+    }
+  }
+
   /**
    * Run a Simple-mode playback action against every track matching current filters.
    * Fetching all pages avoids using only the rows currently rendered in the library.
@@ -158,11 +197,25 @@ export default function Library() {
         ...(debouncedSimpleSearch ? { search: debouncedSimpleSearch } : {}),
       }
       const results = await fetchAllTrackPages(options => api.getTracks(options), filters, PLAYBACK_FETCH_PAGE_SIZE)
-      const allTracks = problemsOnly ? results : results.filter(track => !String(track?.file_path || '').startsWith('ghost://'))
+      const allTracks = problemsOnly ? results : results.filter(isVisibleLibraryTrack)
       if (!allTracks.length) return
-      if (action === 'play') playQueue(allTracks, 0, null)
-      else if (action === 'next') playNextMany(allTracks)
-      else if (action === 'shuffle') playQueue(shuffledLibraryTracks(allTracks), 0, null)
+      if (action === 'play') await playLibrarySelection(allTracks)
+      else if (action === 'shuffle') await playLibrarySelection(shuffledLibraryTracks(allTracks))
+      else if (action === 'next') {
+        if (!allTracks.some(isMobileLinkedTrack)) playNextMany(allTracks)
+        else {
+          const toast = showLoadingToast('Finding songs on your desktop sources…')
+          try {
+            const resolved = await resolveMobileLinkedTracks(allTracks, api, {
+              prepareStreams: false,
+              onProgress: message => toast.update(message),
+              onProviderFailure: failure => toast.update(playbackFallbackMessage(failure)),
+            })
+            if (!resolved.length) toast.close('No playable matches were found.')
+            else { toast.close(); playNextMany(resolved) }
+          } catch { toast.close('Could not resolve the selected tracks.') }
+        }
+      }
     } catch (error) {
       console.error('[Library] Could not fetch every matching track for playback:', error)
       showToast(t('Could not load all matching tracks. Please try again.'))
@@ -194,10 +247,10 @@ export default function Library() {
       if (requestId !== requestIdRef.current) return
       // A failed request keeps the list already shown (and cached).
       if (!Array.isArray(result)) return
-      const items = problemsOnly ? result : result.filter(track => !String(track?.file_path || '').startsWith('ghost://'))
-      offsetRef.current = nextOffset + items.length
+      const items = problemsOnly ? result : result.filter(isVisibleLibraryTrack)
+      offsetRef.current = nextOffset + result.length
       setTracks(prev => append ? [...prev, ...items] : items)
-      setHasMore(items.length === LIBRARY_PAGE_SIZE)
+      setHasMore(result.length === LIBRARY_PAGE_SIZE)
       // Only a real answer ends the first load ("No tracks yet" must be true).
       setLoaded(true)
     } finally {
@@ -245,7 +298,7 @@ export default function Library() {
 
   const artSrc = (t) => t.artwork_path
     ? (api.isElectron ? api.fileURL(t.artwork_path) : api.artworkURL(t.id))
-    : null
+    : (t.artwork_url || null)
 
   return (
     <div className="p-6 space-y-4 pb-10">
@@ -444,14 +497,15 @@ export default function Library() {
 
       {libraryMode === 'simple' && tracks.length > 0 && view === 'grid' && (
         <div className="grid grid-cols-3 @sm:grid-cols-4 @md:grid-cols-5 gap-3">
-          {tracks.map((t, i) => {
+          {tracks.map((t) => {
             const src = artSrc(t)
             return (
               <motion.button
                 key={t.id}
                 initial={false}
                 whileHover={shouldAnimateGrid ? { scale: 1.04 } : undefined}
-                onDoubleClick={() => playQueue(tracks, i)}
+                onClick={() => { if (isMobileLinkedTrack(t)) void playLibrarySelection(tracks, t) }}
+                onDoubleClick={() => { if (!isMobileLinkedTrack(t)) void playLibrarySelection(tracks, t) }}
                 className="flex flex-col gap-2 text-left group"
               >
                 <div className="w-full aspect-square rounded-xl bg-elevated border border-border overflow-hidden flex items-center justify-center">

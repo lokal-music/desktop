@@ -310,7 +310,7 @@ router.post('/history/artwork', async (req, res) => {
   if (!recorded) return res.status(404).json({ error: 'Unknown mobile play.' })
   const id = 'link_' + require('../../electron/link/store').hash(key)
   const row = db.prepare('SELECT file_path,artwork_path FROM tracks WHERE id=?').get(id)
-  if (!row || !String(row.file_path).startsWith('ghost://link/')) {
+  if (!row || (!String(row.file_path).startsWith('ghost://link/') && !String(row.file_path).startsWith('ghost://mobile/'))) {
     // The history event already resolved to a real desktop recording (or its
     // placeholder was promoted to one). Mark the cover transfer complete,
     // rather than making the phone decode and retry it every sync.
@@ -330,7 +330,7 @@ router.post('/history/artwork', async (req, res) => {
     const artwork = await require('../../electron/artwork/thumb').writeCover(
       root, id + '-mobile-history', bytes
     )
-    db.prepare("UPDATE tracks SET artwork_path=?,download_source='mobile' WHERE id=? AND file_path LIKE 'ghost://link/%'")
+    db.prepare("UPDATE tracks SET artwork_path=?,download_source='mobile' WHERE id=? AND (file_path LIKE 'ghost://link/%' OR file_path LIKE 'ghost://mobile/%')")
       .run(artwork,id)
     require('../../electron/ipc/remote').events.emit('library', { type: 'mobile-history-artwork' })
     return res.set('Cache-Control', 'private, no-store').json({ ok: true })

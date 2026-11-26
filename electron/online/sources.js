@@ -532,6 +532,8 @@ function saveOnlineTracks(db, items = []) {
  */
 function pruneOnlineTracks(db, maxAgeMs = 7 * 24 * 3600 * 1000) {
   try {
+    const hasMobileCatalog = !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='link_mobile_catalog'").get()
+    const mobileCatalogExclude = hasMobileCatalog ? 'AND id NOT IN (SELECT track_id FROM link_mobile_catalog)' : ''
     const prune = db.transaction((cutoff) => {
       const ids = db.prepare(`
         SELECT id FROM tracks
@@ -540,6 +542,7 @@ function pruneOnlineTracks(db, maxAgeMs = 7 * 24 * 3600 * 1000) {
           AND id NOT IN (SELECT track_id FROM playlist_tracks)
           AND id NOT IN (SELECT track_id FROM user_likes)
           AND id NOT IN (SELECT track_id FROM play_history)
+          ${mobileCatalogExclude}
       `).all(cutoff).map(row => row.id)
 
       for (const id of ids) {

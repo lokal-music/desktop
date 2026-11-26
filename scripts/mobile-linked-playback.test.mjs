@@ -115,17 +115,21 @@ test('mobile likes use desktop provider priority and retain likes, history and p
   } finally { fixture.db.close() }
 })
 
-test('mobile-only catalogue rows play from the paired phone without provider substitution', async () => {
+test('mobile-only catalogue rows resolve through this PC configured online providers and keep their catalogue link', async () => {
   const fixture = database()
   try {
+    fixture.db.exec('CREATE TABLE link_mobile_catalog(user_id TEXT, device_id TEXT, track_key TEXT, track_id TEXT, snapshot_id TEXT, updated_at INTEGER, PRIMARY KEY(user_id, device_id, track_key))')
+    fixture.db.prepare('UPDATE tracks SET file_path=? WHERE id=?').run('ghost://mobile/link_phone', mobile.id)
+    fixture.db.prepare('INSERT INTO link_mobile_catalog VALUES(?,?,?,?,?,?)').run('owner', 'phone-1', 'phone-recording', mobile.id, 'snap_1', 1000)
     const catalogue = { ...mobile, id: 'link_phone', file_path: 'ghost://mobile/link_phone' }
     assert.equal(isMobileLinkedTrack(catalogue), true)
-    assert.equal(isPlayable(catalogue), true)
-    assert.deepEqual(streamRef(catalogue), { provider: 'mobile', id: 'link_phone' })
+    assert.equal(isPlayable(catalogue), false)
+    assert.equal(streamRef(catalogue), null, 'there is no direct phone audio URL')
     const c = client(fixture)
     const [found] = await resolveMobileLinkedTracks([catalogue], c, { prepareStreams: false })
-    assert.equal(found.id, catalogue.id)
-    assert.deepEqual(c.searched, [], 'direct phone playback does not search PC providers')
+    assert.equal(found.id, stream.id)
+    assert.deepEqual(c.searched, [addon], 'resolution follows the PC configured provider order')
+    assert.equal(fixture.db.prepare('SELECT track_id FROM link_mobile_catalog WHERE device_id=?').get('phone-1').track_id, stream.id, 'catalogue association follows the resolved PC stream')
   } finally { fixture.db.close() }
 })
 

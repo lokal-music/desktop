@@ -42,7 +42,7 @@ function fixture() {
 
 const song = { title: 'Affection', artist: 'Boys Noize, ABRA', album: 'Affection', album_artist: 'Boys Noize', track_num: 2, disc_num: 1, year: 2024, genre: 'Electronic', duration: 180 }
 
-test('mobile-only songs become streamable metadata rows and repeated snapshots do not duplicate them', () => {
+test('mobile-only songs become metadata rows resolved via PC sources and repeated snapshots do not duplicate them', () => {
   const f = fixture()
   try {
     f.page('snapshot_0001', [song])
@@ -51,7 +51,31 @@ test('mobile-only songs become streamable metadata rows and repeated snapshots d
     assert.equal(tracks.length, 1)
     assert.equal(tracks[0].file_path, 'ghost://mobile/' + tracks[0].id)
     assert.equal(tracks[0].download_source, 'mobile')
+    assert.equal(tracks[0].album_artist, 'Boys Noize')
+    assert.equal(tracks[0].track_num, 2)
+    assert.equal(tracks[0].disc_num, 1)
+    assert.equal(tracks[0].year, 2024)
+    assert.equal(tracks[0].genre, 'Electronic')
     assert.equal(f.db.prepare('SELECT COUNT(*) n FROM link_mobile_catalog').get().n, 1)
+  } finally { f.db.close() }
+})
+
+test('mobile-only songs appear in default Library track queries and Mobile source filter', () => {
+  const { trackFileFilter, isLibraryVisibleTrack } = require('../electron/libraryTracks.js')
+  const { listTracks } = require('../electron/trackErrors.js')
+  const f = fixture()
+  try {
+    f.db.prepare('INSERT INTO tracks (id,file_path,title,artist,album,duration) VALUES (?,?,?,?,?,?)')
+      .run('local-copy', '/Music/local.flac', 'Local Song', 'Local Artist', 'Album', 200)
+    f.db.prepare('INSERT INTO tracks (id,file_path,title,artist,album,duration) VALUES (?,?,?,?,?,?)')
+      .run('imported-ghost', 'ghost://spotify/import/1', 'Imported', 'Artist', 'Album', 210)
+    f.page('snapshot_0001', [song])
+
+    const allWhere = [trackFileFilter(undefined, f.db)]
+    const allRows = listTracks(f.db, { sort: 'title ASC' }, { where: allWhere, params: [], exists: () => true })
+    assert.deepEqual(allRows.map(r => r.title), ['Affection', 'Local Song'])
+    assert.equal(allRows.every(isLibraryVisibleTrack), true)
+    assert.equal(allRows.find(r => r.title === 'Affection')?.mobile_catalog, true)
   } finally { f.db.close() }
 })
 
@@ -69,7 +93,25 @@ test('an existing desktop recording is reused instead of creating a mobile dupli
   } finally { f.db.close() }
 })
 
-test('only a complete snapshot retires songs removed from the phone', () => {
+test('an already-resolved online stream is reused on subsequent phone snapshots without duplicating', () => {
+  const f = fixture()
+  try {
+    f.page('snapshot_0001', [song])
+    const initialId = f.db.prepare('SELECT id FROM tracks').get().id
+    f.db.prepare('INSERT INTO tracks (id,file_path,title,artist,album,duration) VALUES (?,?,?,?,?,?)')
+      .run('yt-resolved', 'ghost://youtube/online/abc12345678', song.title, song.artist, song.album, song.duration)
+    f.db.prepare('UPDATE link_mobile_catalog SET track_id=? WHERE track_id=?').run('yt-resolved', initialId)
+    f.db.prepare('DELETE FROM tracks WHERE id=?').run(initialId)
+
+    f.page('snapshot_0002', [song])
+    const rows = f.db.prepare('SELECT * FROM tracks').all()
+    assert.equal(rows.length, 1)
+    assert.equal(rows[0].id, 'yt-resolved')
+    assert.equal(f.db.prepare('SELECT track_id FROM link_mobile_catalog').get().track_id, 'yt-resolved')
+  } finally { f.db.close() }
+})
+
+test('only a complete snapshot or device revocation retires songs removed from the phone', () => {
   const f = fixture()
   try {
     f.page('snapshot_0001', [song])
@@ -84,13 +126,13 @@ test('only a complete snapshot retires songs removed from the phone', () => {
   } finally { f.db.close() }
 })
 
-test('new phone catalogue rows expose the authenticated Mobile stream source', async () => {
+test('new phone catalogue rows enter the desktop online-provider resolution flow rather than direct phone streaming', async () => {
   const { isMobileLinkedTrack } = await import('../src/mobileLinkedTracks.js')
   const { isPlayable, streamRef, audioSrcFor } = await import('../src/onlineTracks.js')
-  const { api } = await import('../src/api.js')
   const track = { id: 'link_phone', file_path: 'ghost://mobile/link_phone', title: song.title, artist: song.artist }
   assert.equal(isMobileLinkedTrack(track), true)
-  assert.equal(isPlayable(track), true)
-  assert.deepEqual(streamRef(track), { provider: 'mobile', id: 'link_phone' })
-  assert.equal(audioSrcFor(track), api.onlineStreamURL('mobile', 'link_phone'))
+  assert.equal(isPlayable(track), false, 'metadata placeholder is not mistaken for a ready stream')
+  assert.equal(streamRef(track), null, 'playback resolves via this PC configured online sources, not a phone URL')
+  assert.equal(audioSrcFor(track), null)
 })
+

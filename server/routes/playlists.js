@@ -515,8 +515,24 @@ function resolveGhostTrack(db, ghostTrackId, targetTrackId, sourceIdentity = nul
     // A streamed ghost can have been liked and played: keep that on the file.
     db.prepare('UPDATE OR IGNORE user_likes SET track_id = ? WHERE track_id = ?').run(targetTrackId, ghostTrackId)
     db.prepare('UPDATE OR IGNORE play_history SET track_id = ? WHERE track_id = ?').run(targetTrackId, ghostTrackId)
-    // Mobile sync identities and qualified listening events must follow the
-    // same recording, including a subsequent stream -> downloaded-file merge.
+    // Mobile sync identities, phone catalogue associations and qualified
+    // listening events must follow the same recording, including a subsequent
+    // stream -> downloaded-file merge.
+    if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='link_mobile_catalog'").get()) {
+      db.prepare(`
+        UPDATE link_mobile_catalog AS mobile
+        SET track_id = ?
+        WHERE track_id = ?
+          AND NOT EXISTS (
+            SELECT 1 FROM link_mobile_catalog AS current
+            WHERE current.user_id = mobile.user_id
+              AND current.device_id = mobile.device_id
+              AND current.track_key = mobile.track_key
+              AND current.track_id = ?
+          )
+      `).run(targetTrackId, ghostTrackId, targetTrackId)
+      db.prepare('DELETE FROM link_mobile_catalog WHERE track_id = ?').run(ghostTrackId)
+    }
     for (const table of ['track_aliases', 'link_track_aliases', 'listening_events']) {
       if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) {
         db.prepare('UPDATE ' + table + ' SET track_id = ? WHERE track_id = ?').run(targetTrackId, ghostTrackId)

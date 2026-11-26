@@ -27,7 +27,7 @@ function snapshotPlaylists(store, userId) {
           artist: row.artist,
           album: row.album,
           duration: row.duration,
-          online_ref: path.startsWith('ghost://') && !path.startsWith('ghost://link/'),
+          online_ref: path.startsWith('ghost://') && !path.startsWith('ghost://link/') && !path.startsWith('ghost://mobile/'),
           source_ref: path.startsWith(youtube) ? 'yt:' + path.slice(youtube.length)
             : path.startsWith(soundcloud) ? 'sc:' + path.slice(soundcloud.length) : null,
           artwork_url: row.artwork_url

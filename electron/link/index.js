@@ -125,6 +125,7 @@ function createLink({ server, db, remote, enabled = () => true, advertiseDesktop
           case 'catalog.push': {
             if (device.legacy) throw new Error('Pair this device before syncing')
             const result = mobileCatalog.accept({ userId: device.user_id, deviceId: device.id, body })
+            libraryRefresh.accepted(result.changed)
             send(socket, 'ack', { ok: true, ...result }, message.id)
             break
           }
@@ -200,7 +201,15 @@ function createLink({ server, db, remote, enabled = () => true, advertiseDesktop
       if (!store.renameDevice(id, user, name)) return {ok:false,error:'The device is unavailable.'}
       return {ok:true,device:store.devices(user).find(device=>device.id===id)}
     },
-    revoke(id) { const result=store.revoke(id,currentUser());if(result)closeDevice(id);return {ok:result} },
+    revoke(id) {
+      const user = currentUser()
+      const result = store.revoke(id, user)
+      if (result) {
+        closeDevice(id)
+        libraryRefresh.accepted(mobileCatalog.revokeDevice(user, id))
+      }
+      return { ok: result }
+    },
     commandDevice(id,command) {
       const socket=sockets.get(id)
       if (!socket || !store.devices(currentUser()).some(d=>d.id===id&&!d.revoked)) return Promise.resolve({ok:false,error:'Phone is not connected.'})

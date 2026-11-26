@@ -493,7 +493,7 @@ router.get('/', (req, res) => {
   }
   const params = []
   // A query string: "problems=false" must not count as on.
-  const files = require('../../electron/trackErrors').truthy(problems) ? null : require('../../electron/libraryTracks').trackFileFilter(source === 'mobile' ? '1' : includeGhosts)
+  const files = require('../../electron/trackErrors').truthy(problems) ? null : require('../../electron/libraryTracks').trackFileFilter(source === 'mobile' ? '1' : includeGhosts, db)
   const where = files ? [files] : []
   if (id) { where.push('id = ?'); params.push(id) }
   if (artistName) { where.push('artist = ?'); params.push(artistName) }
