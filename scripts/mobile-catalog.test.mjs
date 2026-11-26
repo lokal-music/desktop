@@ -5,6 +5,7 @@ import { createRequire } from 'node:module'
 
 const require = createRequire(import.meta.url)
 const { createMobileCatalog } = require('../electron/link/mobileCatalog.js')
+globalThis.localStorage = { getItem: () => null, setItem() {} }
 
 function fixture() {
   const db = new DatabaseSync(':memory:')
@@ -80,4 +81,12 @@ test('only a complete snapshot retires songs removed from the phone', () => {
     assert.equal(retired.file_path, 'ghost://link/' + id)
     assert.equal(retired.download_source, null)
   } finally { f.db.close() }
+})
+
+test('new phone catalogue rows are playable through the Mobile stream provider', async () => {
+  const { streamRef, isPlayable, audioSrcFor } = await import('../src/onlineTracks.js')
+  const track = { id: 'link_phone', file_path: 'ghost://mobile/link_phone', title: song.title, artist: song.artist }
+  assert.deepEqual(streamRef(track), { provider: 'mobile', id: 'link_phone' })
+  assert.equal(isPlayable(track), true)
+  assert.equal(audioSrcFor(track), 'lokal-stream://mobile/link_phone')
 })
