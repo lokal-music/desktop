@@ -89,3 +89,48 @@ test('closing the desktop link cancels its pending playlist refresh', async () =
   await new Promise(resolve => setTimeout(resolve, 40))
   assert.equal(renders, 0)
 })
+
+test('installCapture triggers compile in SQLite, allow pairing, and log track_id swaps', async () => {
+  const { DatabaseSync } = await import('node:sqlite')
+  const { LinkStore } = require('../electron/link/store.js')
+  const { installCapture } = require('../electron/link/capture.js')
+  const db = new DatabaseSync(':memory:')
+  db.transaction = fn => () => {
+    db.exec('BEGIN IMMEDIATE')
+    try { const r = fn(); db.exec('COMMIT'); return r }
+    catch (e) { db.exec('ROLLBACK'); throw e }
+  }
+  try {
+    db.exec(`
+      CREATE TABLE tracks (
+        id TEXT PRIMARY KEY, file_path TEXT, file_hash TEXT, title TEXT, artist TEXT,
+        album TEXT, album_artist TEXT, genre TEXT, year INTEGER, track_num INTEGER,
+        duration REAL, artwork_url TEXT, download_source TEXT
+      );
+      CREATE TABLE playlists (id TEXT PRIMARY KEY, uuid TEXT, user_id TEXT, name TEXT);
+      CREATE TABLE playlist_tracks (id INTEGER PRIMARY KEY, playlist_id TEXT, track_id TEXT, position INTEGER);
+      CREATE TABLE user_likes (user_id TEXT, track_id TEXT);
+      CREATE TABLE listening_events (id INTEGER PRIMARY KEY, user_id TEXT, track_id TEXT, event_type TEXT, seconds_played REAL, ended_at INTEGER, created_at INTEGER);
+    `)
+    const store = new LinkStore(db)
+    installCapture(store, () => 'owner')
+    const pairing = store.createPairing('owner')
+    assert.ok(pairing?.code)
+
+    db.prepare('INSERT INTO tracks (id,file_path,title,artist,duration) VALUES (?,?,?,?,?)')
+      .run('g1', 'ghost://spotify/1', 'Song', 'Artist', 180)
+    db.prepare('INSERT INTO tracks (id,file_path,title,artist,duration) VALUES (?,?,?,?,?)')
+      .run('l1', '/Music/song.flac', 'Song', 'Artist', 180)
+    db.prepare('INSERT INTO playlists (id,uuid,user_id,name) VALUES (?,?,?,?)')
+      .run('p1', 'pl-uuid-1', 'owner', 'Mix')
+    db.prepare('INSERT INTO playlist_tracks (id,playlist_id,track_id,position) VALUES (?,?,?,?)')
+      .run(1, 'p1', 'g1', 0)
+
+    db.prepare('UPDATE playlist_tracks SET track_id=? WHERE id=?').run('l1', 1)
+    const ops = db.prepare("SELECT op, fields_json FROM library_ops WHERE entity_id='pl-uuid-1' ORDER BY cursor").all()
+    assert.deepEqual(ops.map(o => o.op), ['playlist.create', 'playlist.add', 'playlist.remove', 'playlist.add'])
+  } finally {
+    db.close()
+  }
+})
+
