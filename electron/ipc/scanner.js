@@ -761,22 +761,18 @@ function sourceFilter(source, userId = 'guest', db = null) {
   if (source === 'local') return { sql: 'download_source IS NULL', params: [] }
   if (source === 'addon') return { sql: "download_source LIKE 'a-%'", params: [] }
   if (source === 'mobile') {
-    // The catalogue maps phone recordings to their desktop rows. Include those
-    // rows even when the desktop already owns a matching file and therefore
-    // correctly retains its original download_source value.
     let hasCatalog = false
     try {
       hasCatalog = !!db?.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='link_mobile_catalog'").get()
     } catch {}
-    // Link catalogue ownership comes from the paired device's Link account
-    // (device.user_id), not the transient remote-player state. The latter is
-    // commonly absent and defaults to "guest", which hid every catalogue row
-    // belonging to a signed-in Link account. The catalogue is already scoped
-    // to this Desktop database, so match any paired-device association here.
+    // 'mobile' shows only mobile-exclusive songs not stored as files on this PC.
+    // Songs already present on PC (even if linked via link_mobile_catalog) belong
+    // to their PC source filter, and songs copied from mobile belong to 'mobile-downloads'.
     return hasCatalog
-      ? { sql: "(download_source = ? OR id IN (SELECT track_id FROM link_mobile_catalog))", params: ['mobile'] }
-      : { sql: 'download_source = ?', params: ['mobile'] }
+      ? { sql: "(file_path LIKE 'ghost://mobile/%' OR (file_path LIKE 'ghost://%' AND id IN (SELECT track_id FROM link_mobile_catalog)))", params: [] }
+      : { sql: "file_path LIKE 'ghost://mobile/%'", params: [] }
   }
+  if (source === 'mobile-downloads') return { sql: "download_source = ? AND file_path NOT LIKE 'ghost://%'", params: ['mobile'] }
   if (['yt', 'sc', 'mono', 'soulseek', 'web'].includes(source)) return { sql: 'download_source = ?', params: [source] }
   return null
 }

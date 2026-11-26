@@ -18,7 +18,7 @@ function fixture() {
     CREATE TABLE tracks (
       id TEXT PRIMARY KEY, file_path TEXT UNIQUE, file_hash TEXT, title TEXT,
       artist TEXT, album TEXT, duration REAL, source_ref TEXT, artwork_url TEXT,
-      download_source TEXT, album_artist TEXT, track_num INTEGER,
+      artwork_path TEXT, download_source TEXT, album_artist TEXT, track_num INTEGER,
       disc_num INTEGER, year INTEGER, genre TEXT
     );
   `)
@@ -135,4 +135,93 @@ test('new phone catalogue rows enter the desktop online-provider resolution flow
   assert.equal(streamRef(track), null, 'playback resolves via this PC configured online sources, not a phone URL')
   assert.equal(audioSrcFor(track), null)
 })
+
+test('recording-level matching avoids duplicates for remastered/feat/album_artist/split-credit variants and relinks stale ghosts', () => {
+  const f = fixture()
+  try {
+    // 1. Desktop has clean original; phone has remaster + feat + YouTube artifact
+    f.db.prepare('INSERT INTO tracks (id,file_path,title,artist,album,album_artist,duration) VALUES (?,?,?,?,?,?,?)')
+      .run('pc-1', '/Music/track1.flac', 'Midnight City', 'M83', 'Hurry Up', 'M83', 243)
+    // 2. Desktop has "Song (with Guest)" under album owner; phone credits the guest
+    f.db.prepare('INSERT INTO tracks (id,file_path,title,artist,album,album_artist,duration) VALUES (?,?,?,?,?,?,?)')
+      .run('pc-2', '/Music/track2.flac', 'Runaway (with Aurora)', 'Kanye', 'Album', 'Kanye', 210)
+    // 3. Desktop has multi-credit in artist, phone has album_artist owner
+    f.db.prepare('INSERT INTO tracks (id,file_path,title,artist,album,album_artist,duration) VALUES (?,?,?,?,?,?,?)')
+      .run('pc-3', '/Music/track3.flac', 'Starboy', 'The Weeknd, Daft Punk', 'Starboy', 'The Weeknd', 230)
+
+    const res = f.page('snapshot_0001', [
+      { title: 'Midnight City (2011 Remaster) [0123456789abcdef]', artist: 'M83', album: 'Hurry Up', duration: 244 },
+      { title: 'Runaway', artist: 'Aurora', album: 'Album', duration: 211 },
+      { title: 'Starboy', artist: 'The Weeknd', album_artist: 'The Weeknd', album: 'Starboy', duration: 230 },
+      { title: 'Phone Exclusive', artist: 'Indie Artist', album: 'EP', duration: 195 },
+    ])
+    const tracks = f.db.prepare('SELECT * FROM tracks ORDER BY id').all()
+    assert.equal(tracks.length, 4, 'only Phone Exclusive should create a new ghost row')
+    const ghost = tracks.find(t => t.title === 'Phone Exclusive')
+    assert.ok(ghost && ghost.file_path.startsWith('ghost://mobile/'))
+    assert.deepEqual(res.missingArtwork.length, 1)
+
+    // Now simulate PC later acquiring Phone Exclusive: next snapshot relinks and retires ghost
+    f.db.prepare('INSERT INTO tracks (id,file_path,title,artist,album,duration) VALUES (?,?,?,?,?,?)')
+      .run('pc-4', '/Music/exclusive.flac', 'Phone Exclusive', 'Indie Artist', 'EP', 195)
+    const res2 = f.page('snapshot_0002', [
+      { title: 'Phone Exclusive', artist: 'Indie Artist', album: 'EP', duration: 195 },
+    ])
+    assert.equal(res2.missingArtwork.length, 0)
+    assert.equal(f.db.prepare('SELECT track_id FROM link_mobile_catalog').get().track_id, 'pc-4')
+    assert.equal(f.db.prepare('SELECT id FROM tracks WHERE id=?').get(ghost.id), undefined)
+  } finally { f.db.close() }
+})
+
+test('mobile filter shows only mobile-exclusive ghost tracks while mobile-downloads shows copied files', () => {
+  const { smartTracks } = require('../electron/playlists/smart.js')
+  const f = fixture()
+  try {
+    // PC local file also linked via mobile catalog
+    f.db.prepare('INSERT INTO tracks (id,file_path,title,artist,album,duration) VALUES (?,?,?,?,?,?)')
+      .run('pc-local', '/Music/local.flac', 'On Both', 'Artist A', 'Album', 200)
+    // File copied from mobile onto PC
+    f.db.prepare('INSERT INTO tracks (id,file_path,title,artist,album,duration,download_source) VALUES (?,?,?,?,?,?,?)')
+      .run('copied-mobile', '/Music/copied.flac', 'Copied Song', 'Artist B', 'Album', 180, 'mobile')
+
+    f.page('snapshot_0001', [
+      { title: 'On Both', artist: 'Artist A', album: 'Album', duration: 200 },
+      { title: 'Only On Phone', artist: 'Artist C', album: 'Album', duration: 190 },
+    ])
+
+    const mobileRows = smartTracks(f.db, { match: 'all', rules: [{ field: 'source', op: 'is', value: 'mobile' }] })
+    assert.deepEqual(mobileRows.map(r => r.title), ['Only On Phone'])
+
+    const dlRows = smartTracks(f.db, { match: 'all', rules: [{ field: 'source', op: 'is', value: 'mobile-downloads' }] })
+    assert.deepEqual(dlRows.map(r => r.title), ['Copied Song'])
+  } finally { f.db.close() }
+})
+
+test('missingArtwork returns track keys for ghost catalog tracks lacking art and clears once artwork_path or artwork_url is set', () => {
+  const f = fixture()
+  try {
+    const s1 = { title: 'No Art', artist: 'Artist', album: 'Alb', duration: 180 }
+    const s2 = { title: 'Has Url', artist: 'Artist', album: 'Alb', duration: 185, artwork_url: 'https://example.com/art.jpg' }
+    const res1 = f.page('snapshot_0001', [s1, s2])
+    assert.equal(res1.missingArtwork.length, 1)
+
+    // Set artwork_path on the first ghost track (simulating /api/remote/catalog/artwork)
+    const ghost = f.db.prepare("SELECT id FROM tracks WHERE title='No Art'").get()
+    f.db.prepare('UPDATE tracks SET artwork_path=? WHERE id=?').run('/tmp/fake-cover.jpg', ghost.id)
+    // Note: mobileCatalog checks fs.existsSync(artwork_path), so test with a real temp file
+    const fs = require('node:fs')
+    const os = require('node:os')
+    const path = require('node:path')
+    const tmp = path.join(os.tmpdir(), `mobile-cat-art-${Date.now()}.jpg`)
+    fs.writeFileSync(tmp, Buffer.from([0xff, 0xd8, 0xff, 0xd9]))
+    try {
+      f.db.prepare('UPDATE tracks SET artwork_path=? WHERE id=?').run(tmp, ghost.id)
+      const res2 = f.page('snapshot_0002', [s1, s2])
+      assert.equal(res2.missingArtwork.length, 0)
+    } finally {
+      try { fs.unlinkSync(tmp) } catch {}
+    }
+  } finally { f.db.close() }
+})
+
 

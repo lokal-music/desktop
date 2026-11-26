@@ -312,6 +312,7 @@ export default function Library() {
             <option value="all">{t("All sources")}</option>
             <option value="local">{t("Music folder")}</option>
             <option value="mobile">{t("Mobile")}</option>
+            <option value="mobile-downloads">{t("Mobile downloads")}</option>
             <option value="yt">{t("YouTube")}</option>
             <option value="sc">{t("SoundCloud")}</option>
             <option value="addon">{t("Addons")}</option>

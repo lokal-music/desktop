@@ -22,7 +22,7 @@ const SORTS = {
   random: 'RANDOM()',
 }
 const MAX_LIMIT = 5000
-const SOURCES = ['local', 'yt', 'sc', 'mono', 'soulseek', 'addon', 'web', 'mobile']
+const SOURCES = ['local', 'yt', 'sc', 'mono', 'soulseek', 'addon', 'web', 'mobile', 'mobile-downloads']
 const TIERS = ['hires', 'lossless', 'high', 'low', 'suspect']
 
 const like = (text) => `%${String(text).replace(/[\\%_]/g, char => `\\${char}`)}%`
@@ -120,9 +120,10 @@ const FIELDS = {
         hasCatalog = !!db?.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='link_mobile_catalog'").get()
       } catch {}
       sql = hasCatalog
-        ? "(t.download_source = 'mobile' OR t.id IN (SELECT track_id FROM link_mobile_catalog))"
-        : "t.download_source = 'mobile'"
-    } else sql = `t.download_source = '${value}'`
+        ? "(t.file_path LIKE 'ghost://mobile/%' OR (t.file_path LIKE 'ghost://%' AND t.id IN (SELECT track_id FROM link_mobile_catalog)))"
+        : "t.file_path LIKE 'ghost://mobile/%'"
+    } else if (value === 'mobile-downloads') sql = "t.download_source = 'mobile' AND t.file_path NOT LIKE 'ghost://%'"
+    else sql = `t.download_source = '${value}'`
     return op === 'not' ? `NOT (${sql})` : sql
   },
 }

@@ -27,7 +27,7 @@ export const SMART_FIELDS = {
     label: 'Source',
     ops: [['is', 'is'], ['not', 'is not']],
     input: 'select',
-    options: [['local', 'Your files'], ['yt', 'YouTube downloads'], ['sc', 'SoundCloud downloads'], ['mono', 'Monochrome downloads'], ['soulseek', 'Soulseek downloads'], ['addon', 'Addon downloads'], ['web', 'Other downloads'], ['mobile', 'Mobile device']],
+    options: [['local', 'Your files'], ['yt', 'YouTube downloads'], ['sc', 'SoundCloud downloads'], ['mono', 'Monochrome downloads'], ['soulseek', 'Soulseek downloads'], ['addon', 'Addon downloads'], ['web', 'Other downloads'], ['mobile', 'Mobile'], ['mobile-downloads', 'Mobile downloads']],
   },
 }
 
