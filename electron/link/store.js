@@ -309,6 +309,7 @@ class LinkStore {
           const filePath = 'ghost://mobile/' + deviceId + '/' + item.song_id
           this.db.prepare("UPDATE tracks SET file_path=?,download_source='mobile' WHERE id=?")
             .run(filePath, track.id)
+          track = this.db.prepare('SELECT * FROM tracks WHERE id=?').get(track.id)
         }
         if (!track) continue
         if (String(track.file_path || '').startsWith('ghost://mobile/')) {
