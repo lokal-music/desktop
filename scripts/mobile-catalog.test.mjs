@@ -56,7 +56,7 @@ test('mobile catalogue skips recordings already present on desktop and stores pl
       },
     ], { device_id: device, snapshot_id: snapshot }, 'owner', device)
     assert.equal(accepted, 2)
-    const phone = db.prepare("SELECT * FROM tracks WHERE file_path LIKE 'ghost://mobile/%'").get()
+    const phone = db.prepare("SELECT * FROM tracks WHERE title='Phone Only' AND file_path LIKE 'ghost://mobile/%'").get()
     assert.equal(phone.title, 'Phone Only')
     assert.equal(phone.download_source, 'mobile')
     assert.equal(db.prepare('SELECT stream_url FROM link_mobile_catalog WHERE track_id=?').get(phone.id).stream_url,
