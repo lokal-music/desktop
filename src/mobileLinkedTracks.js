@@ -18,6 +18,9 @@ export async function resolveMobileLinkedTracks(tracks, client = api, options = 
     const rows = await mapLimited(tracks || [], async track => {
       if (!isCurrent()) return null
       if (!isMobileLinkedTrack(track)) return isPlayable(track) ? track : null
+      // Phone-hosted rows already have a direct authenticated stream source;
+      // do not replace them with a lower-fidelity desktop provider match.
+      if (String(track.file_path || '').startsWith('ghost://mobile/')) return track
       const candidate = {
         title: track.title, artist: track.artist, album: track.album,
         duration: track.duration, artwork_url: track.artwork_url,
