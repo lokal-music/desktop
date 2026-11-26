@@ -19,6 +19,9 @@ export async function resolveMobileLinkedTracks(tracks, client = api, options = 
     const rows = await mapLimited(tracks || [], async track => {
       if (!isCurrent()) return null
       if (!isMobileLinkedTrack(track)) return isPlayable(track) ? track : null
+      // New phone catalogue rows stream directly from their paired device.
+      // Keep the legacy provider-resolution path for older ghost://link rows.
+      if (String(track.file_path || '').startsWith('ghost://mobile/')) return track
       const candidate = {
         title: track.title, artist: track.artist, album: track.album,
         duration: track.duration, artwork_url: track.artwork_url,
