@@ -73,14 +73,15 @@ export default function SourceIcon({ source, size = 14, className = '', colored 
 
 export function TrackSourceIcon({ track, addonNames, className = '' }) {
   const stream = streamRef(track)
-  const mobileHistory = String(track.file_path || '').startsWith('ghost://link/') || String(track.file_path || '').startsWith('ghost://mobile/') || track.download_source === 'mobile'
+  const mobileCatalog = String(track.file_path || '').startsWith('ghost://mobile/') || track.download_source === 'mobile'
+  const mobileHistory = String(track.file_path || '').startsWith('ghost://link/') && !mobileCatalog
   const source = stream?.provider || track.download_source || (mobileHistory ? 'mobile' : null)
   const label = downloadSourceLabel(source, addonNames)
   const local = !source && !String(track.file_path || '').startsWith('ghost://')
   if (local) return null
-  const description = mobileHistory
-    ? 'Played on Lokal Mobile · audio not stored on this PC'
-    : source === 'mobile' ? 'In mobile catalogue · resolved using this PC’s configured sources'
+  const description = mobileCatalog
+    ? 'In mobile catalogue · playback resolved using this PC’s configured sources'
+    : mobileHistory ? 'Played on Lokal Mobile · audio not stored on this PC'
     : label ? `${stream ? 'Streamed' : 'Downloaded'} from ${label}${stream ? ' · not in your library yet' : ''}`
     : 'Source unknown'
   return (
