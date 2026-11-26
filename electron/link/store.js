@@ -46,6 +46,13 @@ class LinkStore {
         PRIMARY KEY(user_id, track_key)
       );
       CREATE TABLE IF NOT EXISTS track_content_hashes (sha256 TEXT NOT NULL, bytes INTEGER NOT NULL, track_id TEXT NOT NULL, PRIMARY KEY(sha256, bytes));
+      CREATE TABLE IF NOT EXISTS link_mobile_catalog_state (user_id TEXT NOT NULL, device_id TEXT NOT NULL, snapshot_id TEXT NOT NULL, started_at INTEGER NOT NULL, PRIMARY KEY(user_id,device_id));
+      CREATE TABLE IF NOT EXISTS link_mobile_catalog (
+        user_id TEXT NOT NULL, device_id TEXT NOT NULL, song_id TEXT NOT NULL,
+        track_id TEXT NOT NULL, stream_url TEXT NOT NULL, snapshot_id TEXT NOT NULL,
+        updated_at INTEGER NOT NULL, PRIMARY KEY(user_id, device_id, song_id)
+      );
+      CREATE INDEX IF NOT EXISTS link_mobile_catalog_track ON link_mobile_catalog(track_id);
       CREATE INDEX IF NOT EXISTS link_history_user_cursor ON history_events(user_id, cursor);
       CREATE INDEX IF NOT EXISTS link_ops_user_cursor ON library_ops(user_id, cursor);
     `)
@@ -243,6 +250,91 @@ class LinkStore {
     this.db.prepare('INSERT OR IGNORE INTO tracks (id,file_path,file_hash,title,artist,album,duration,source_ref,artwork_url) VALUES (?,?,?,?,?,?,?,?,?)')
       .run(id,filePath,text(fields.file_hash)||id,text(fields.title)||title,text(fields.artist)||artist,text(fields.album),duration,youtube||soundcloud ? source : null,artwork);
     return this.db.prepare('SELECT * FROM tracks WHERE id=?').get(id);
+  }
+  beginMobileCatalog(body, userId, deviceId) {
+    const snapshot = text(body?.snapshot_id, 128)
+    const source = text(body?.device_id, 128)
+    if (!snapshot || !/^[a-zA-Z0-9_-]{8,128}$/.test(source)) throw new Error('Invalid mobile catalogue snapshot')
+    if (source !== deviceId) throw new Error('Mobile catalogue device mismatch')
+    this.db.prepare('INSERT OR REPLACE INTO link_mobile_catalog_state (user_id,device_id,snapshot_id,started_at) VALUES (?,?,?,?)')
+      .run(userId, deviceId, snapshot, this.now())
+    return true
+  }
+  applyMobileCatalog(items, body, userId, deviceId) {
+    if (!Array.isArray(items) || items.length > 100) throw new Error('Invalid mobile catalogue batch')
+    const snapshot = text(body?.snapshot_id, 128)
+    const source = text(body?.device_id, 128)
+    const active = this.db.prepare('SELECT snapshot_id FROM link_mobile_catalog_state WHERE user_id=? AND device_id=?').get(userId, deviceId)
+    if (!snapshot || source !== deviceId || active?.snapshot_id !== snapshot) throw new Error('Mobile catalogue snapshot expired')
+    return this.db.transaction(() => {
+      let accepted = 0
+      for (const item of items) {
+        if (!item || typeof item.song_id !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(item.song_id) ||
+            !text(item.title, 500) || !text(item.artist, 500) ||
+            !Number.isFinite(Number(item.duration)) || Number(item.duration) <= 0 ||
+            typeof item.stream_url !== 'string') throw new Error('Invalid mobile catalogue track')
+        let url
+        try { url = new URL(item.stream_url) } catch { throw new Error('Invalid mobile stream address') }
+        const ip = require('net').isIP(url.hostname)
+        const octets = url.hostname.split('.').map(Number)
+        const privateV4 = ip === 4 && (
+          octets[0] === 10 || octets[0] === 192 && octets[1] === 168 ||
+          octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31 ||
+          octets[0] === 169 && octets[1] === 254
+        )
+        if (url.protocol !== 'http:' || !privateV4 || url.username || url.password || url.search || url.hash)
+          throw new Error('Mobile stream must use a private LAN address')
+        const fields = {
+          title: text(item.title, 500), artist: text(item.artist, 500),
+          album: text(item.album, 500), album_artist: text(item.album_artist, 500),
+          duration: Number(item.duration),
+        }
+        const existing = this.matchTrack({ ...fields, track_key: trackKey(fields) })
+        let track = existing
+        if (!track || !String(track.file_path || '').startsWith('ghost://')) {
+          if (!track) {
+            const id = 'mobile_' + hash(deviceId + ':' + item.song_id).slice(0, 40)
+            const filePath = 'ghost://mobile/' + deviceId + '/' + item.song_id
+            this.db.prepare(`INSERT OR IGNORE INTO tracks
+              (id,file_path,file_hash,title,artist,album,album_artist,duration,download_source,genre,year,track_num)
+              VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+                id, filePath, id, fields.title, fields.artist, fields.album || null,
+                fields.album_artist || null, fields.duration, 'mobile',
+                text(item.genre, 200) || null, Number.isInteger(item.year) ? item.year : null,
+                Number.isInteger(item.track_num) ? item.track_num : null
+              )
+            track = this.db.prepare('SELECT * FROM tracks WHERE id=?').get(id)
+          }
+        } else {
+          const filePath = 'ghost://mobile/' + deviceId + '/' + item.song_id
+          this.db.prepare("UPDATE tracks SET file_path=?,download_source='mobile' WHERE id=?")
+            .run(filePath, track.id)
+        }
+        if (!track) continue
+        if (String(track.file_path || '').startsWith('ghost://mobile/')) {
+          this.db.prepare(`INSERT OR REPLACE INTO link_mobile_catalog
+            (user_id,device_id,song_id,track_id,stream_url,snapshot_id,updated_at)
+            VALUES (?,?,?,?,?,?,?)`).run(userId, deviceId, item.song_id, track.id, url.toString(), snapshot, this.now())
+          accepted++
+        }
+      }
+      return accepted
+    })()
+  }
+  finishMobileCatalog(body, userId, deviceId) {
+    const snapshot = text(body?.snapshot_id, 128)
+    const state = this.db.prepare('SELECT snapshot_id FROM link_mobile_catalog_state WHERE user_id=? AND device_id=?').get(userId, deviceId)
+    if (!snapshot || state?.snapshot_id !== snapshot || body?.device_id !== deviceId) throw new Error('Mobile catalogue snapshot expired')
+    return this.db.transaction(() => {
+      const stale = this.db.prepare('SELECT track_id FROM link_mobile_catalog WHERE user_id=? AND device_id=? AND snapshot_id<>?').all(userId, deviceId, snapshot)
+      this.db.prepare('DELETE FROM link_mobile_catalog WHERE user_id=? AND device_id=? AND snapshot_id<>?').run(userId, deviceId, snapshot)
+      for (const row of stale) {
+        const referenced = this.db.prepare('SELECT 1 FROM playlist_tracks WHERE track_id=? UNION SELECT 1 FROM user_likes WHERE track_id=? LIMIT 1').get(row.track_id, row.track_id)
+        if (!referenced) this.db.prepare("DELETE FROM tracks WHERE id=? AND file_path LIKE 'ghost://mobile/%'").run(row.track_id)
+      }
+      this.db.prepare('DELETE FROM link_mobile_catalog_state WHERE user_id=? AND device_id=?').run(userId, deviceId)
+      return { removed: stale.length, received: Number(body.count) || 0 }
+    })()
   }
   pushHistory(items, userId, deviceId) {
     if (!Array.isArray(items) || items.length > MAX_BATCH) throw new Error('Invalid history batch')
