@@ -9,6 +9,7 @@ on:
       - 'src/pages/Playlist.jsx'
       - 'server/routes/playlists.js'
       - 'scripts/mobile-linked-playback.test.mjs'
+      - 'scripts/mobile-catalog.test.mjs'
       - 'server/index.js'
       - 'scripts/link-persistence.test.mjs'
       - 'scripts/link-device-names.test.mjs'
@@ -40,6 +41,9 @@ jobs:
       - name: Check desktop link syntax
         run: |
           node --check electron/link/index.js
+          node --check electron/link/mobileCatalog.js
+          node --check electron/ipc/online.js
+          node --check server/routes/playlists.js
           node --check electron/link/reconcile.js
           node --check electron/network/lanInterfaces.js
           node --check electron/network/mdns.js
@@ -47,6 +51,8 @@ jobs:
         run: node --test scripts/link-lan-discovery.test.cjs scripts/cast-discovery.test.mjs
       - name: Test desktop playlist synchronization
         run: npm run test:desktop-link-playlists
+      - name: Test mobile catalogue snapshots and playback source
+        run: node --experimental-sqlite --test scripts/mobile-catalog.test.mjs
       - name: Test desktop playback and downloads for synced mobile likes
         run: node --experimental-sqlite --test scripts/mobile-linked-playback.test.mjs scripts/ghost-downloads.test.mjs scripts/recommendation-downloads.test.mjs
       - name: Test mobile history attribution and artwork guards
