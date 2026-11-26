@@ -1039,7 +1039,7 @@ function registerStreamProtocol(protocol, net) {
       }
       if (provider === 'mobile') {
         const source = getDB().prepare(
-          'SELECT stream_url FROM link_mobile_catalog WHERE track_id = ?'
+          'SELECT stream_url FROM link_mobile_catalog WHERE track_id = ? ORDER BY updated_at DESC LIMIT 1'
         ).get(id)?.stream_url
         if (!source) return new Response('Phone track is unavailable. Reconnect and sync the mobile library.', { status: 404 })
         const headers = {}
