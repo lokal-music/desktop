@@ -1045,16 +1045,21 @@ function registerStreamProtocol(protocol, net) {
         const headers = {}
         const range = request.headers.get('Range')
         if (range && /^bytes=\\d*-\\d*$/.test(range)) headers.Range = range
-        const response = await net.fetch(source, { method: request.method === 'HEAD' ? 'HEAD' : 'GET', headers })
+        const controller = new AbortController()
+        request.signal?.addEventListener?.('abort', () => controller.abort(), { once: true })
+        const response = await net.fetch(source, {
+          method: request.method === 'HEAD' ? 'HEAD' : 'GET',
+          headers,
+          signal: controller.signal,
+        })
         const forwarded = new Headers()
         for (const name of ['content-type', 'content-length', 'content-range', 'accept-ranges']) {
           const value = response.headers.get(name)
           if (value) forwarded.set(name, value)
         }
-        return new Response(request.method === 'HEAD' ? null : response.body, {
-          status: response.status,
-          headers: forwarded,
-        })
+        const body = request.method === 'HEAD' ? null
+          : sources.cancellableBody(response.body, () => controller.abort())
+        return new Response(body, { status: response.status, headers: forwarded })
       }
       if (provider === 'yt' && accountSession) await accountSession.credentials()
       if (provider === 'ytv') {
