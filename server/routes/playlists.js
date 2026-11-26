@@ -467,7 +467,7 @@ function resolveGhostTrack(db, ghostTrackId, targetTrackId, sourceIdentity = nul
     return alias?.track_id === targetTrackId ? { ok: true, track: target } : { error: 'Ghost track not found' }
   }
   const mobileStream = options.resolveMobileStream === true &&
-    String(ghost.file_path || '').startsWith('ghost://link/') &&
+    /^ghost:\/\/(?:link|mobile)\//.test(String(ghost.file_path || '')) &&
     !!require('../../electron/online/sources').streamRef(target)
   // Only synced mobile metadata may be linked to a verified, persisted online
   // recording. Ordinary imported ghosts must still resolve to real files.
