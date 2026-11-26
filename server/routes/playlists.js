@@ -496,6 +496,9 @@ function resolveGhostTrack(db, ghostTrackId, targetTrackId, sourceIdentity = nul
 
   const run = db.transaction(() => {
     applyImportedMetadata(db, targetTrackId, ghost)
+    if (ghost.artwork_path) {
+      db.prepare("UPDATE tracks SET artwork_path = COALESCE(NULLIF(artwork_path, ''), ?) WHERE id = ?").run(ghost.artwork_path, targetTrackId)
+    }
 
     if (options.dedupePlaylist) {
       // Resolving several ghost rows can legitimately find the same library

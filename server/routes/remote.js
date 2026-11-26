@@ -339,6 +339,57 @@ router.post('/history/artwork', async (req, res) => {
   }
 })
 
+// Phone catalogue entries for tracks not stored on this PC can carry a local
+// cover thumbnail from the phone. Accept bounded JPEGs only for ghost tracks
+// associated with the paired device's catalogue that do not already have art.
+router.post('/catalog/artwork', async (req, res) => {
+  const userId = pairedUser(req, res)
+  if (!userId) return
+  const key = req.body?.track_key
+  const encoded = req.body?.image_base64
+  if (typeof key !== 'string' || !key.trim() || key.length > 1500 ||
+      typeof encoded !== 'string' || encoded.length > 240000 ||
+      !/^[a-zA-Z0-9+/]+={0,2}$/.test(encoded)) {
+    return res.status(400).json({ error: 'Invalid catalog artwork.' })
+  }
+  const db = getDB()
+  const linkStore = require('../../electron/link/store')
+  const catalogRow = db.prepare(
+    'SELECT track_id FROM link_mobile_catalog WHERE user_id=? AND device_id=? AND track_key=? LIMIT 1'
+  ).get(userId, req.linkDevice.id, key)
+  const trackId = catalogRow?.track_id || ('link_' + linkStore.hash(key))
+  const row = db.prepare('SELECT id,file_path,artwork_path FROM tracks WHERE id=?').get(trackId)
+  if (!row) {
+    return catalogRow
+      ? res.json({ ok: true, noPlaceholder: true })
+      : res.status(404).json({ error: 'Unknown mobile catalog track.' })
+  }
+  if (!String(row.file_path || '').startsWith('ghost://')) {
+    return res.json({ ok: true, noPlaceholder: true })
+  }
+  const fs = require('fs')
+  if (row.artwork_path && fs.existsSync(row.artwork_path)) {
+    return res.json({ ok: true, alreadyPresent: true })
+  }
+  const bytes = Buffer.from(encoded, 'base64')
+  if (bytes.length < 20 || bytes.length > 180000 ||
+      !(bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff)) {
+    return res.status(415).json({ error: 'Expected a bounded JPEG thumbnail.' })
+  }
+  try {
+    const root = require('path').join(require('../../electron/ipc/db').getStorageDir(), 'artwork')
+    const artwork = await require('../../electron/artwork/thumb').writeCover(
+      root, row.id + '-mobile-catalog', bytes
+    )
+    db.prepare("UPDATE tracks SET artwork_path=? WHERE id=? AND (artwork_path IS NULL OR artwork_path='') AND file_path LIKE 'ghost://%'")
+      .run(artwork, row.id)
+    require('../../electron/ipc/remote').events.emit('library', { type: 'mobile-catalog-artwork' })
+    return res.set('Cache-Control', 'private, no-store').json({ ok: true })
+  } catch (error) {
+    return res.status(500).json({ error: 'Could not save mobile catalog artwork.' })
+  }
+})
+
 // Phone originals may use a separate cover.jpg rather than an embedded
 // picture. Accept artwork only for an audio file copied from that phone, and
 // never replace an existing image from a real file or an owner's manual edit.
