@@ -331,8 +331,18 @@ class LinkStore {
       const stale = this.db.prepare('SELECT track_id FROM link_mobile_catalog WHERE user_id=? AND device_id=? AND snapshot_id<>?').all(userId, deviceId, snapshot)
       this.db.prepare('DELETE FROM link_mobile_catalog WHERE user_id=? AND device_id=? AND snapshot_id<>?').run(userId, deviceId, snapshot)
       for (const row of stale) {
-        const referenced = this.db.prepare('SELECT 1 FROM playlist_tracks WHERE track_id=? UNION SELECT 1 FROM user_likes WHERE track_id=? LIMIT 1').get(row.track_id, row.track_id)
-        if (!referenced) this.db.prepare("DELETE FROM tracks WHERE id=? AND file_path LIKE 'ghost://mobile/%'").run(row.track_id)
+        const referenced = this.db.prepare(`
+          SELECT 1 FROM playlist_tracks WHERE track_id=?
+          UNION SELECT 1 FROM user_likes WHERE track_id=?
+          UNION SELECT 1 FROM play_history WHERE track_id=?
+          UNION SELECT 1 FROM listening_events WHERE track_id=?
+          LIMIT 1
+        `).get(row.track_id, row.track_id, row.track_id, row.track_id)
+        if (referenced) {
+          this.db.prepare("UPDATE tracks SET file_path='ghost://link/' || id WHERE id=? AND file_path LIKE 'ghost://mobile/%'").run(row.track_id)
+        } else {
+          this.db.prepare("DELETE FROM tracks WHERE id=? AND file_path LIKE 'ghost://mobile/%'").run(row.track_id)
+        }
       }
       this.db.prepare('DELETE FROM link_mobile_catalog_state WHERE user_id=? AND device_id=?').run(userId, deviceId)
       return { removed: stale.length, received: Number(body.count) || 0 }
