@@ -27,7 +27,8 @@ export function isGhostTrack(track) {
 export function streamRef(track) {
   const path = String(track?.file_path || '')
   const mobile = path.match(/^ghost:\/\/mobile\/([a-zA-Z0-9_-]+)$/)
-  if (mobile) return { provider: 'mobile', id: mobile[1] }\n  const fromAddon = path.match(/^ghost:\/\/addon\/([0-9a-f]{10})\/(.+)$/)
+  if (mobile) return { provider: 'mobile', id: mobile[1] }
+  const fromAddon = path.match(/^ghost:\/\/addon\/([0-9a-f]{10})\/(.+)$/)
   if (fromAddon) {
     try { return { provider: `a-${fromAddon[1]}`, id: decodeURIComponent(fromAddon[2]) } } catch { return null }
   }
