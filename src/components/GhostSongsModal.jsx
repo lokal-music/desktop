@@ -127,7 +127,7 @@ export default function GhostSongsModal({ open, onClose, ghostTracks, playlistId
   const assign = async (ghost, item) => {
     setStatus(t("Assigning…"))
     try {
-      const result = await api.resolveGhostTrack(ghost.id, item.id)
+      const result = await api.resolveGhostTrack(ghost.id, item.id, { dedupePlaylist: true })
       if (result?.error) { setStatus('Assign failed: ' + result.error); return }
       setStatus(`Assigned "${item.title}".`)
       onChanged?.()
