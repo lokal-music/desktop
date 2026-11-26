@@ -22,7 +22,7 @@ const SORTS = {
   random: 'RANDOM()',
 }
 const MAX_LIMIT = 5000
-const SOURCES = ['local', 'yt', 'sc', 'mono', 'soulseek', 'addon', 'web']
+const SOURCES = ['local', 'mobile', 'yt', 'sc', 'mono', 'soulseek', 'addon', 'web']
 const TIERS = ['hires', 'lossless', 'high', 'low', 'suspect']
 
 const like = (text) => `%${String(text).replace(/[\\%_]/g, char => `\\${char}`)}%`
