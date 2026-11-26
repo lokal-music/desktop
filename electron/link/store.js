@@ -27,6 +27,12 @@ class LinkStore {
     this.attempts = new Map()
     this.suppressed = 0
     this.videoClipChanges = new Map()
+    this.pendingTrash = []
+    this.currentUser = () => 'guest'
+    // Merges, restores and remote lifecycle ops are not user edits: let any
+    // code holding the DB run work with Link capture switched off.
+    db._linkStore = this
+    db._withLinkSuppressed = fn => { this.suppressed++; try { return fn() } finally { this.suppressed-- } }
     db.exec(`
       CREATE TABLE IF NOT EXISTS link_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS link_track_aliases (track_key TEXT PRIMARY KEY, track_id TEXT NOT NULL);
@@ -39,9 +45,18 @@ class LinkStore {
         user_id TEXT NOT NULL, track_key TEXT NOT NULL, op_id TEXT NOT NULL,
         PRIMARY KEY(user_id, track_key)
       );
+      CREATE TABLE IF NOT EXISTS track_content_hashes (sha256 TEXT NOT NULL, bytes INTEGER NOT NULL, track_id TEXT NOT NULL, PRIMARY KEY(sha256, bytes));
       CREATE INDEX IF NOT EXISTS link_history_user_cursor ON history_events(user_id, cursor);
       CREATE INDEX IF NOT EXISTS link_ops_user_cursor ON library_ops(user_id, cursor);
     `)
+    // Re-adding a deleted song locally (not from a phone/remote op) revives it.
+    db.function('link_tombstone_key', (artist, title, duration) => trackKey({ artist, title, duration }))
+    db.function('link_tombstone_clear_enabled', () => this.suppressed === 0 ? 1 : 0)
+    try {
+      db.exec(`CREATE TRIGGER IF NOT EXISTS link_track_readded AFTER INSERT ON tracks
+        WHEN link_tombstone_clear_enabled()=1 AND NEW.file_path NOT LIKE 'ghost://%' AND NEW.file_path NOT LIKE 'stream://%' AND COALESCE(NEW.download_source,'')<>'mobile'
+        BEGIN DELETE FROM link_tombstones WHERE entity='track' AND entity_id=link_tombstone_key(NEW.artist,NEW.title,NEW.duration); END;`)
+    } catch {}
     // Existing pairings retain their names and tokens; aliases are optional.
     if (!db.prepare('PRAGMA table_info(remote_devices)').all().some(column => column.name === 'custom_name')) {
       db.exec("ALTER TABLE remote_devices ADD COLUMN custom_name TEXT NOT NULL DEFAULT ''")
@@ -128,11 +143,32 @@ class LinkStore {
   hasPairedDevices() { return Boolean(this.db.prepare('SELECT 1 FROM remote_devices WHERE revoked=0 LIMIT 1').get()) }
   revoke(id, userId) { return this.db.prepare('UPDATE remote_devices SET revoked=1 WHERE id=? AND user_id=?').run(id, userId).changes > 0 }
   touch(id) { this.db.prepare('UPDATE remote_devices SET last_seen=? WHERE id=?').run(this.now(), id) }
-  pull(table, userId, cursor = 0) {
+  pull(table, userId, cursor = 0, opts = {}) {
     if (!['history_events', 'library_ops'].includes(table)) throw new Error('Unknown link log')
     const after = Math.max(0, Number.isSafeInteger(Number(cursor)) ? Number(cursor) : 0)
     const rows = this.db.prepare(`SELECT * FROM ${table} WHERE user_id=? AND cursor>? ORDER BY cursor LIMIT ?`).all(userId, after, MAX_BATCH)
-    return { items: rows.map(({ user_id, ...row }) => row), cursor: rows.at(-1)?.cursor ?? after, hasMore: rows.length === MAX_BATCH }
+    // Older phones cannot apply lifecycle ops: skip them but still advance.
+    const visible = table === 'library_ops' && opts?.trackLifecycle === false
+      ? rows.filter(row => !['track.delete', 'track.deduplicate'].includes(row.op)) : rows
+    return { items: visible.map(({ user_id, ...row }) => row), cursor: rows.at(-1)?.cursor ?? after, hasMore: rows.length === MAX_BATCH }
+  }
+  /** True when a track.delete tombstone covers this phone track reference. */
+  hasTrackTombstone(userId, item) {
+    const keys = [...new Set([item?.track_key, trackKey(item || {}), item?.track ? trackKey(item.track) : ''].map(key => text(key, 1500)).filter(Boolean))]
+    return keys.some(key => this.db.prepare("SELECT 1 FROM link_tombstones WHERE user_id=? AND entity='track' AND entity_id=?").get(userId, key))
+  }
+  async flushPendingTrash() {
+    const queued = this.pendingTrash.splice(0)
+    if (!queued.length) return null
+    const files = require('../ipc/trackFiles')
+    const result = { removed: [], skipped: [], failed: [] }
+    const groups = [queued.filter(entry => !entry.needsSetting), queued.filter(entry => entry.needsSetting)]
+    for (const [index, group] of groups.entries()) {
+      if (!group.length || (index === 1 && !files.deleteFilesEnabled(this.db))) continue
+      const part = await files.trashFilesInRoots(this.db, group.map(entry => entry.file))
+      for (const key of Object.keys(result)) result[key].push(...part[key])
+    }
+    return result
   }
   matchTrack(fields) {
     if (fields.file_hash) {
@@ -321,6 +357,87 @@ class LinkStore {
     return changes
   }
 
+  trackPlaylistCount(id) { return this.db.prepare('SELECT COUNT(DISTINCT playlist_id) n FROM playlist_tracks WHERE track_id=?').get(id).n }
+  queueTrash(track, needsSetting) {
+    if (!track?.file_path || /^(ghost|stream):\/\//.test(track.file_path)) return
+    this.pendingTrash.push({ file: track.file_path, needsSetting })
+  }
+  // Rows (other than `excludeIds`) that still use this file after a merge/delete.
+  fileInUse(file, excludeIds) {
+    return this.db.prepare('SELECT id FROM tracks WHERE file_path=?').all(file).some(row => !excludeIds.has(row.id))
+  }
+  applyDeduplicate(fields) {
+    const lifecycle = require('./trackLifecycle')
+    const { tierRank } = require('../duplicateGroups')
+    const { sameRecording, editionKey } = require('../recordingIdentity')
+    const list = value => Array.isArray(value) ? value.slice(0, 200) : []
+    const keys = [text(fields.keep_key, 1500), ...list(fields.removed_keys).map(key => text(key, 1500))].filter(Boolean)
+    const hashes = list(fields.removed_hashes).map(item => ({ sha256: text(item?.sha256, 64).toLowerCase(), bytes: Number(item?.bytes) }))
+      .filter(item => /^[0-9a-f]{64}$/.test(item.sha256) && Number.isSafeInteger(item.bytes) && item.bytes > 0)
+    const keepHash = text(fields.keep_hash, 128)
+    const real = "file_path NOT LIKE 'ghost://%' AND file_path NOT LIKE 'stream://%'"
+    const found = new Map()
+    const add = rows => { for (const row of rows) found.set(row.id, row) }
+    for (const hash of [keepHash, ...hashes.map(item => item.sha256)].filter(Boolean)) {
+      const audio = this.hasColumn('tracks', 'audio_sha256')
+      add(this.db.prepare(`SELECT * FROM tracks WHERE (file_hash=?${audio ? ' OR audio_sha256=?' : ''}) AND ${real}`).all(...(audio ? [hash, hash] : [hash])))
+    }
+    const probe = { title: text(fields.title, 1000), artist: text(fields.artist, 1000), duration: Number(fields.duration) || 0 }
+    if (probe.title && probe.artist) {
+      add(this.db.prepare(`SELECT * FROM tracks WHERE ${real} AND (COALESCE(duration,0)=0 OR ?=0 OR ABS(duration-?)<=2)`).all(probe.duration, probe.duration).filter(row => sameRecording(probe, row, 2)))
+    }
+    const keep = this.matchTrack({ track_key: text(fields.keep_key, 1500), file_hash: keepHash })
+    if (keep && !String(keep.file_path).startsWith('ghost://') && !String(keep.file_path).startsWith('stream://')) found.set(keep.id, keep)
+    const candidates = [...found.values()]
+    if (!candidates.length) return
+    for (const row of candidates) row.playlist_count = this.trackPlaylistCount(row.id)
+    candidates.sort((a, b) => Number(require('fs').existsSync(b.file_path)) - Number(require('fs').existsSync(a.file_path)) ||
+      tierRank(b) - tierRank(a) || Number(b.download_source !== 'mobile') - Number(a.download_source !== 'mobile') || b.playlist_count - a.playlist_count)
+    const best = candidates[0]
+    lifecycle.recordKeysAndHashes(this.db, best.id, keys, hashes)
+    // A single matching copy is NEVER deleted: the op only teaches it new identities.
+    if (candidates.length < 2) return
+    const losers = candidates.slice(1).filter(row => editionKey(row) === editionKey(best) && sameRecording(best, row, 2))
+    if (!losers.length || !require('fs').existsSync(best.file_path)) return
+    const { mergeTrackReferences } = require('../mergeTrackReferences')
+    const ids = new Set(losers.map(row => row.id))
+    const bestReal = (() => { try { return require('fs').realpathSync(best.file_path) } catch { return best.file_path } })()
+    const snapshots = lifecycle.snapshot(this.db, losers.map(row => row.id))
+    for (const loser of snapshots) {
+      const real = (() => { try { return require('fs').realpathSync(loser.file_path) } catch { return loser.file_path } })()
+      if (real !== bestReal && loser.file_path !== best.file_path && !this.fileInUse(loser.file_path, ids)) this.queueTrash(loser, false)
+      mergeTrackReferences(this.db, best.id, loser)
+    }
+  }
+  hasColumn(table, column) { return this.db.prepare(`PRAGMA table_info(${table})`).all().some(item => item.name === column) }
+  applyTrackDelete(item, fields, userId) {
+    this.db.prepare('INSERT OR REPLACE INTO link_tombstones VALUES (?,?,?,?,?,?)').run(userId, 'track', item.entity_id, item.hlc, item.device_id, item.op_id)
+    const limit = (Number(String(item.hlc).split(':')[0]) || 0) + 5000
+    const key = text(fields.track_key, 1500) || item.entity_id
+    const raw = text(fields.raw_track_key, 1500)
+    const hash = text(fields.file_hash, 128)
+    const parts = key.split('|'), parsedDuration = Number(parts.pop())
+    const parsedTitle = parts.pop() || '', parsedArtist = parts.join('|')
+    const { sameRecording } = require('../recordingIdentity')
+    const probe = {
+      title: text(fields.title, 1000) || parsedTitle, artist: text(fields.artist, 1000) || parsedArtist,
+      duration: Number(fields.duration) || (Number.isFinite(parsedDuration) ? parsedDuration : 0),
+    }
+    const found = new Map()
+    const add = rows => { for (const row of rows) found.set(row.id, row) }
+    if (hash) add(this.db.prepare('SELECT * FROM tracks WHERE file_hash=?').all(hash))
+    add(this.db.prepare('SELECT t.* FROM link_track_aliases a JOIN tracks t ON t.id=a.track_id WHERE a.track_key IN (?,?)').all(key, raw || key))
+    if (probe.title && probe.artist) {
+      add(this.db.prepare('SELECT * FROM tracks WHERE (COALESCE(duration,0)=0 OR ?=0 OR ABS(duration-?)<=2)').all(probe.duration, probe.duration).filter(row => trackKey(row) === key || (raw && trackKey(row) === raw) || sameRecording(probe, row, 2)))
+    }
+    const lifecycle = require('./trackLifecycle')
+    const victims = [...found.values()].filter(row => Number(row.added_at || 0) * 1000 <= limit)
+    const ids = new Set(victims.map(row => row.id))
+    for (const row of victims) {
+      if (!this.fileInUse(row.file_path, ids)) this.queueTrash(row, false)
+      lifecycle.deleteTrackRows(this.db, row.id)
+    }
+  }
   applyOps(items, userId, deviceId) {
     if (!Array.isArray(items) || items.length > MAX_BATCH) throw new Error('Invalid library batch')
     const count = this.db.transaction(() => {
@@ -329,7 +446,7 @@ class LinkStore {
       try {
         for (const item of items) {
           const fields = item.fields || (typeof item.fields_json === 'string' ? JSON.parse(item.fields_json) : {})
-          if (!item || !/^[a-zA-Z0-9_-]{8,128}$/.test(item.op_id || '') || !/^[a-zA-Z0-9_-]{8,128}$/.test(item.device_id || '') || !/^\d{16}:\d{8}$/.test(item.hlc || '') || !['like','playlist','track'].includes(item.entity) || !text(item.entity_id,1500) || !['like','unlike','playlist.create','playlist.rename','playlist.delete','playlist.add','playlist.remove','playlist.move','track.edit'].includes(item.op) || !fields || typeof fields !== 'object' || Array.isArray(fields) || JSON.stringify(fields).length > 32768) throw new Error('Invalid library operation')
+          if (!item || !/^[a-zA-Z0-9_-]{8,128}$/.test(item.op_id || '') || !/^[a-zA-Z0-9_-]{8,128}$/.test(item.device_id || '') || !/^\d{16}:\d{8}$/.test(item.hlc || '') || !['like','playlist','track'].includes(item.entity) || !text(item.entity_id,1500) || !['like','unlike','playlist.create','playlist.rename','playlist.delete','playlist.add','playlist.remove','playlist.move','track.edit','track.deduplicate','track.delete'].includes(item.op) || !fields || typeof fields !== 'object' || Array.isArray(fields) || JSON.stringify(fields).length > 32768) throw new Error('Invalid library operation')
           if (item.entity === 'like' ? !['like','unlike'].includes(item.op) : !item.op.startsWith(item.entity+'.')) throw new Error('Library operation entity mismatch')
           this.tick(item.hlc)
           const stored = this.db.prepare('INSERT OR IGNORE INTO library_ops (op_id,user_id,device_id,hlc,entity,entity_id,op,fields_json) VALUES (?,?,?,?,?,?,?,?)').run(item.op_id,userId,item.device_id,item.hlc,item.entity,item.entity_id,item.op,JSON.stringify(fields))
@@ -372,6 +489,10 @@ class LinkStore {
                 else this.db.prepare('INSERT INTO playlist_tracks (playlist_id,track_id,position,added_by,added_at) VALUES (?,?,?,?,?)').run(playlist.id,track.id,position,userId,Math.floor(this.now()/1000))
               }
             }
+          } else if (item.entity==='track' && item.op==='track.deduplicate') {
+            this.applyDeduplicate(fields)
+          } else if (item.entity==='track' && item.op==='track.delete') {
+            if (win('deleted')) this.applyTrackDelete(item, fields, userId)
           } else if (item.entity==='track' && item.op==='track.edit') {
             if (Object.hasOwn(fields, 'video_clip') && linkedVideoClip(fields.video_clip)) {
               this.queueVideoClip(item, userId, fields)

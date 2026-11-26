@@ -3,6 +3,25 @@
 // scanner's path-based file_hash. Nothing is uploaded, deleted or overwritten.
 const fs = require('fs')
 const { createHash } = require('crypto')
+const { ensureTrackContentHashes } = require('../electron/trackContentHashes')
+
+// Live, non-ghost track (following aliases) whose file exists, or null.
+function liveTrack(db, id) {
+  const seen = new Set()
+  while (typeof id === 'string' && !seen.has(id) && seen.size < 32) {
+    seen.add(id)
+    const row = db.prepare('SELECT id,file_path FROM tracks WHERE id=?').get(id)
+    if (row) return row.file_path && !String(row.file_path).startsWith('ghost://') && fs.existsSync(row.file_path) ? row : null
+    id = db.prepare('SELECT track_id FROM track_aliases WHERE old_id=?').get(id)?.track_id
+  }
+  return null
+}
+function hashRows(db, where, args) {
+  try {
+    ensureTrackContentHashes(db)
+    return db.prepare(`SELECT sha256,bytes,track_id FROM track_content_hashes WHERE ${where}`).all(...args)
+  } catch { return [] }
+}
 
 async function resolvePhoneFiles(db, fingerprints, { check = () => {} } = {}) {
   const sizes = new Set(fingerprints.map(item => item.size))
@@ -38,6 +57,17 @@ async function resolvePhoneFiles(db, fingerprints, { check = () => {} } = {}) {
       }
     }
   }
+  const matched = new Set(matches.map(m => m.index))
+  for (let index = 0; index < fingerprints.length; index++) {
+    if (matched.has(index)) continue
+    check()
+    const item = fingerprints[index]
+    for (const entry of hashRows(db, 'sha256=? AND bytes=?', [String(item.sha256).toLowerCase(), item.size])) {
+      let live = null
+      try { live = liveTrack(db, entry.track_id) } catch { /* missing alias table */ }
+      if (live) { matches.push({ index, trackId: String(live.id) }); break }
+    }
+  }
   return matches
 }
 // A size miss proves the bytes cannot match. This avoids reading every new
@@ -52,6 +82,15 @@ async function candidateOriginalSizes(db, sizes, { check = () => {} } = {}) {
       if (stat.isFile() && wanted.has(stat.size)) found.add(stat.size)
     } catch { /* Unavailable originals aren't candidates. */ }
     if (found.size === wanted.size) break
+  }
+  if (found.size < wanted.size) {
+    for (const entry of hashRows(db, 'bytes IN (' + [...wanted].map(() => '?').join(',') + ')', [...wanted])) {
+      check()
+      if (found.has(entry.bytes)) continue
+      let live = null
+      try { live = liveTrack(db, entry.track_id) } catch { /* missing alias table */ }
+      if (live) found.add(entry.bytes)
+    }
   }
   check()
   return [...found]

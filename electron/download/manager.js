@@ -1526,6 +1526,21 @@ class DownloadManager {
         const published = libraryFiles.publish(filepath, root, libraryFiles.stagingDirectory(root, job.id))
         releases.push(published.release)
         let finalPath = published.filePath
+        // The ' [16hex]' addon temp suffix is a collision guard for staging only.
+        {
+          const ext = path.extname(finalPath), stem = finalPath.slice(0, -ext.length)
+          const bare = require('../transferArtifacts').cleanTransferStem(stem)
+          if (bare && bare !== stem && !fs.existsSync(bare + ext)) {
+            try {
+              releases.push(libraryFiles.hold(bare + ext))
+              fs.moveSync(finalPath, bare + ext, { overwrite: false })
+              for (const side of ['.lrc', '.elrc', '.ttml', '.txt']) {
+                if (fs.existsSync(stem + side) && !fs.existsSync(bare + side)) fs.moveSync(stem + side, bare + side, { overwrite: false })
+              }
+              finalPath = bare + ext
+            } catch { /* keep the published name */ }
+          }
+        }
         const folder = String(job.settings?.download_folder || '').trim()
         if (folder && !job.opts.outputDir && !job.opts.upgradeTrackId) {
           const assigned = job.downloadFolderNumbers || (job.downloadFolderNumbers = {})

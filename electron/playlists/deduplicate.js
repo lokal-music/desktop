@@ -13,7 +13,10 @@ function deduplicatePlaylist(db, playlistId) {
   }
   if (duplicateIds.length) {
     const remove = db.prepare('DELETE FROM playlist_tracks WHERE playlist_id = ? AND id = ?')
-    db.transaction(() => { for (const rowId of duplicateIds) remove.run(playlistId, rowId) })()
+    const run = () => db.transaction(() => { for (const rowId of duplicateIds) remove.run(playlistId, rowId) })()
+    // Removing repeats is tidying, not a user's remove: never journal it to Link.
+    if (typeof db._withLinkSuppressed === 'function') db._withLinkSuppressed(run)
+    else run()
   }
   return { ok: true, removed: duplicateIds.length, remaining: rows.length - duplicateIds.length }
 }

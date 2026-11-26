@@ -1,6 +1,7 @@
 const fs = require('node:fs')
 const path = require('node:path')
 const { phoneFileName } = require('../server/phoneFileNaming')
+const { cleanTransferMetadata } = require('./transferArtifacts')
 
 // One-time-in-place repair of older phone uploads saved as bare UUID names.
 // Updates the file path, never the track ID, tags, artwork, likes or playlists.
@@ -53,7 +54,22 @@ function repairPhoneCopyFilenames(db, storageDir) {
       break;
     }
   }
+  repairPollutedMobileMetadata(db);
   return repaired;
+}
+
+// Clean machine suffixes / placeholder artists left in mobile rows' titles and
+// artists. Never touches the file, its hash, or the track ID.
+function repairPollutedMobileMetadata(db) {
+  try {
+    const rows = db.prepare("SELECT id, title, artist FROM tracks WHERE download_source = 'mobile'").all();
+    const update = db.prepare('UPDATE tracks SET title = ?, artist = ? WHERE id = ?');
+    for (const row of rows) {
+      const next = cleanTransferMetadata({ title: row.title, artist: row.artist });
+      if (!next.cleaned || !next.title.trim()) continue;
+      update.run(next.title, next.artist, row.id);
+    }
+  } catch (error) { console.warn('[phone-copy] Could not clean mobile metadata:', error.message); }
 }
 
 module.exports = { repairPhoneCopyFilenames }

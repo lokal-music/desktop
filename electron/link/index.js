@@ -16,6 +16,7 @@ function createLink({ server, db, remote, enabled = () => true, advertiseDesktop
   if (instance) return instance
   const currentUser = () => String(remote.getRemoteState().userId || 'guest')
   const store = new LinkStore(db)
+  store.currentUser = currentUser
   installCapture(store, currentUser)
   const libraryRefresh = createLinkedLibraryRefresh()
   const sockets = new Map(), pending = createPendingCommands(), snapshots = new Map()
@@ -77,7 +78,7 @@ function createLink({ server, db, remote, enabled = () => true, advertiseDesktop
     sockets.set(device.id,socket)
     socket.alive=true
     socket.on('pong',()=>{socket.alive=true})
-    send(socket,'hello',{desktopId:store.deviceId,name:os.hostname(),platform:process.platform,user:{id:device.user_id},proto:1,capabilities:['remote','handoff','history','library','theme'],syncPreview:{history:db.prepare('SELECT COUNT(*) n FROM history_events WHERE user_id=?').get(device.user_id).n,operations:db.prepare('SELECT COUNT(*) n FROM library_ops WHERE user_id=?').get(device.user_id).n}})
+    send(socket,'hello',{desktopId:store.deviceId,name:os.hostname(),platform:process.platform,user:{id:device.user_id},proto:1,capabilities:['remote','handoff','history','library','theme','track_lifecycle'],syncPreview:{history:db.prepare('SELECT COUNT(*) n FROM history_events WHERE user_id=?').get(device.user_id).n,operations:db.prepare('SELECT COUNT(*) n FROM library_ops WHERE user_id=?').get(device.user_id).n}})
     send(socket,'state',{...remote.getRemoteState(),target:'desktop'})
     send(socket,'theme',desktopTheme())
     socket.on('message',async raw => {
@@ -90,6 +91,7 @@ function createLink({ server, db, remote, enabled = () => true, advertiseDesktop
         switch (message.type) {
           case 'hello':
             if (!device.legacy) store.updateDeviceName(device.id, device.user_id, body.deviceName)
+            socket.capabilities = new Set(Array.isArray(body.capabilities) ? body.capabilities.filter(item => typeof item === 'string').slice(0, 50) : [])
             break
           case 'state': snapshots.set(device.id,{...body,updatedAt:Date.now()}); break
           case 'ack': {
@@ -101,7 +103,7 @@ function createLink({ server, db, remote, enabled = () => true, advertiseDesktop
               const tracks=body.value?.queue;
               if(!Array.isArray(tracks)||tracks.length>5000)throw new Error('Invalid track query');
               const missing=[];
-              for(let index=0;index<tracks.length;index++){const track=store.matchTrack(tracks[index]);if(!track||track.file_path.startsWith('ghost://')||!require('fs').existsSync(track.file_path))missing.push(index)}
+              for(let index=0;index<tracks.length;index++){const track=store.matchTrack(tracks[index]);if((!track||track.file_path.startsWith('ghost://')||!require('fs').existsSync(track.file_path))&&!store.hasTrackTombstone(device.user_id,tracks[index]))missing.push(index)}
               send(socket,'ack',{ok:true,missing},message.id);break;
             }
             const result=await remote.sendRemoteCommand({action:body.action,value:body.value,ts:Date.now()})
@@ -116,7 +118,7 @@ function createLink({ server, db, remote, enabled = () => true, advertiseDesktop
             reconcilePlaylists(store, device.user_id)
             store.applyPendingVideoClips(device.user_id)
             libraryRefresh.accepted(0, store.takeVideoClipChanges())
-            send(socket,'library.ops',store.pull('library_ops',device.user_id,body.cursor),message.id)
+            send(socket,'library.ops',store.pull('library_ops',device.user_id,body.cursor,{trackLifecycle:socket.capabilities?.has('track_lifecycle')||body.trackLifecycle===true}),message.id)
             break
           case 'library.push': {
             if (device.legacy) throw new Error('Pair this device before syncing')
@@ -124,6 +126,7 @@ function createLink({ server, db, remote, enabled = () => true, advertiseDesktop
             // resulting state afterwards so remote operations are not echoed.
             reconcilePlaylists(store, device.user_id)
             const accepted = store.applyOps(body.items,device.user_id,device.id)
+            try { await store.flushPendingTrash() } catch {}
             savePlaylistSnapshot(store, device.user_id)
             libraryRefresh.accepted(accepted, store.takeVideoClipChanges())
             send(socket,'ack',{ok:true,accepted},message.id)

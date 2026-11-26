@@ -9,6 +9,8 @@ const { PhoneUploadFiles, witness } = require('./phoneUploadFiles')
 const { resolvePhoneFiles } = require('./phoneFileMatch')
 const { findPhonePlaceholder } = require('./linkUploadMatch')
 const { savePhoneFileMetadata } = require('./phoneFileMetadata')
+const { cleanTransferMetadata } = require('../electron/transferArtifacts')
+const { ensureTrackContentHashes, recordTrackContentHash } = require('../electron/trackContentHashes')
 const formats = new Set(['flac','mp3','m4a','aac','ogg','opus','wav','aiff','aif','alac','ape','wv','dsf','dff','webm'])
 
 function metadata(value) {
@@ -31,6 +33,7 @@ const clean = (value, fallback) => typeof value === 'string' && value.trim() ? v
 class PhoneUploadService {
   constructor({ db, storageDir, currentDevice, boundary = () => {}, owner, destination, validateDestination }) {
     this.db = db; this.currentDevice = currentDevice; this.boundary = boundary
+    ensureTrackContentHashes(db)
     this.artworkRoot = path.join(fs.realpathSync(storageDir),'artwork')
     this.files = new PhoneUploadFiles(storageDir,{ destination,validateDestination })
     this.ledger = new PhoneUploadLedger(db, this.files.root, { boundary, ...(owner ? { owner } : {}) })
@@ -197,14 +200,17 @@ class PhoneUploadService {
           if (current?.file_path === matched.row.file_path && this.files.matches(current.file_path, matched.witness)) return { trackId: current.id, witness: matched.witness }
         }
         if (!this.files.matches(candidate.target, proof)) throw failure(409, 'file_changed')
-        const title = clean(meta.title, clean(parsed.common.title,'Unknown track'))
-        const artist = clean(meta.artist, clean(parsed.common.artist,'Unknown artist'))
+        const rawTitle = clean(meta.title, clean(parsed.common.title,'Unknown track'))
+        const rawArtist = clean(meta.artist, clean(parsed.common.artist,'Unknown artist'))
+        const tidy = cleanTransferMetadata({ title: rawTitle, artist: rawArtist })
+        const title = clean(tidy.title, rawTitle), artist = clean(tidy.artist, rawArtist)
         const album = clean(meta.album, clean(parsed.common.album,''))
         const ghost = findPhonePlaceholder(this.db,title,artist,parsed.format.duration)
         const trackId = ghost?.id ?? randomUUID()
-        if (ghost) this.db.prepare('UPDATE tracks SET file_path=?,file_hash=?,duration=? WHERE id=?').run(candidate.target,digest,parsed.format.duration,trackId)
-        else this.db.prepare('INSERT INTO tracks (id,file_path,file_hash,title,artist,album,album_artist,duration,track_num,year) VALUES (?,?,?,?,?,?,?,?,?,?)')
-          .run(trackId,candidate.target,digest,title,artist,album,clean(parsed.common.albumartist,''),parsed.format.duration,parsed.common.track?.no ?? null,parsed.common.year ?? null)
+        if (ghost) this.db.prepare("UPDATE tracks SET file_path=?,file_hash=?,duration=?,download_source='mobile',audio_sha256=? WHERE id=?").run(candidate.target,digest,parsed.format.duration,digest,trackId)
+        else this.db.prepare("INSERT INTO tracks (id,file_path,file_hash,title,artist,album,album_artist,duration,track_num,year,download_source,audio_sha256) VALUES (?,?,?,?,?,?,?,?,?,?,'mobile',?)")
+          .run(trackId,candidate.target,digest,title,artist,album,clean(parsed.common.albumartist,''),parsed.format.duration,parsed.common.track?.no ?? null,parsed.common.year ?? null,digest)
+        recordTrackContentHash(this.db,trackId,digest,bytes)
         const stat = fs.statSync(candidate.target)
         savePhoneFileMetadata(this.db,trackId,parsed,{ artwork,mtimeMs:stat.mtimeMs })
         const artistId = require('../electron/artistId').resolveArtistId(this.db,artist)

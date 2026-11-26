@@ -9,6 +9,26 @@ function isMobileImportPath(filePath, storageDir) {
   return relative !== '' && relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative)
 }
 
+const MOBILE_SEGMENTS = new Set(['phone-downloads', 'lokal phone', 'lokal mobile'])
+// True for files living in a mobile-copy folder: the legacy phone-downloads
+// directory, the configured settings.phone_download_root, or any path segment
+// named Lokal Phone / Lokal Mobile.
+function isMobileFolderPath(filePath, { db, storageDir } = {}) {
+  if (typeof filePath !== 'string' || !filePath) return false
+  if (filePath.split(/[\\/]+/).some(part => MOBILE_SEGMENTS.has(part.toLowerCase()))) return true
+  const roots = []
+  if (storageDir) roots.push(path.join(storageDir, 'phone-downloads'))
+  try {
+    const value = db?.prepare("SELECT value FROM settings WHERE key = 'phone_download_root'").get()?.value
+    if (value) roots.push(value)
+  } catch { /* settings table may not exist */ }
+  return roots.some(root => {
+    if (!path.isAbsolute(filePath) || !path.isAbsolute(root)) return false
+    const relative = path.relative(root, filePath)
+    return relative !== '' && relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative)
+  })
+}
+
 function backfillMobileSources(db, storageDir) {
   const update = db.prepare("UPDATE tracks SET download_source='mobile' WHERE id=? AND download_source IS NULL")
   let changed = 0
@@ -17,4 +37,4 @@ function backfillMobileSources(db, storageDir) {
   }
   return changed
 }
-module.exports = { isMobileImportPath, backfillMobileSources }
+module.exports = { isMobileFolderPath, isMobileImportPath, backfillMobileSources }

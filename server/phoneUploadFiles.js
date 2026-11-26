@@ -119,7 +119,11 @@ class PhoneUploadFiles {
       const target = this.candidate(relative)
       const stat = fs.lstatSync(target, { bigint: true })
       if (stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1n &&
-          String(stat.dev) === initial.dev && String(stat.ino) === initial.ino) fs.unlinkSync(target)
+          String(stat.dev) === initial.dev && String(stat.ino) === initial.ino) {
+        fs.unlinkSync(target)
+        // The staging <uuid> directory is ours alone; rmdir only succeeds when empty.
+        try { fs.rmdirSync(path.dirname(target)) } catch { /* not empty or already gone */ }
+      }
     } catch { /* Preserve uncertain files for explicit recovery. */ }
   }
   publicPath(name) {

@@ -19,6 +19,8 @@
 
 const fs = require('fs')
 const { isAc4Codec } = require('./quality/editionDuplicates')
+const { isMobileFolderPath } = require('./mobileSource')
+const { ensureTrackContentHashes, recordTrackContentHash } = require('./trackContentHashes')
 
 const TAG = 'LOKAL_ADDED'
 const IDS = new Set([`TXXX:${TAG}`, TAG, `----:com.apple.iTunes:${TAG}`])
@@ -128,6 +130,14 @@ function applyToRow(db, trackId, seconds) {
  * next time it's read without the tag. Writing is slow (taglib may rewrite the
  * whole file), so it lets the app breathe between files.
  */
+function recordHash(db, trackId, filePath) {
+  try {
+    ensureTrackContentHashes(db)
+    const bytes = fs.readFileSync(filePath)
+    recordTrackContentHash(db, trackId, require('crypto').createHash('sha256').update(bytes).digest('hex'), bytes.length)
+  } catch { /* identity is best-effort; never block stamping */ }
+}
+
 async function stampAddedDates(db, filePaths, { log = console } = {}) {
   const rowOf = db.prepare("SELECT * FROM tracks WHERE file_path = ? AND file_path NOT LIKE 'ghost://%'")
   const { noteFileWritten } = require('./fileStamp')
@@ -141,9 +151,13 @@ async function stampAddedDates(db, filePaths, { log = console } = {}) {
     // An old row may hold milliseconds.
     if (seconds > 1e11) seconds = Math.floor(seconds / 1000)
     if (!fs.existsSync(filePath)) continue
+    // Phone copies must stay byte-identical to what the phone sent.
+    if (row.download_source === 'mobile' || isMobileFolderPath(filePath, { db })) continue
     await new Promise(resolve => setImmediate(resolve))
     try {
+      recordHash(db, row.id, filePath)
       writeAddedDate(filePath, seconds)
+      recordHash(db, row.id, filePath)
       noteFileWritten(db, filePath)
       written++
     } catch (e) {

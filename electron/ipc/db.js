@@ -425,6 +425,12 @@ function getDB() { return db }
 function getStorageDir() { return _dataDir }
 
 function clearDatabaseTables() {
+  // Wiping the library is not the user deleting items: never log it to Link.
+  if (typeof db._withLinkSuppressed === 'function') return db._withLinkSuppressed(() => clearDatabaseTablesNow())
+  return clearDatabaseTablesNow()
+}
+
+function clearDatabaseTablesNow() {
   db.prepare('DELETE FROM playlist_tracks').run()
   db.prepare('DELETE FROM user_likes').run()
   db.prepare('DELETE FROM play_history').run()
@@ -591,6 +597,15 @@ function importAppData(payload = {}) {
         coverPath,
         playlist.created_at || Math.floor(Date.now() / 1000)
       )
+      // Keep Link identity and smart-playlist rules across a restore.
+      const columns = new Set(db.prepare('PRAGMA table_info(playlists)').all().map(column => column.name))
+      if (playlist.uuid && columns.has('uuid')) {
+        try { db.prepare('UPDATE playlists SET uuid=? WHERE id=?').run(String(playlist.uuid), playlist.id) } catch {}
+      }
+      if (playlist.smart_rules && columns.has('smart_rules')) {
+        const rules = typeof playlist.smart_rules === 'string' ? playlist.smart_rules : JSON.stringify(playlist.smart_rules)
+        db.prepare('UPDATE playlists SET smart_rules=? WHERE id=?').run(rules, playlist.id)
+      }
     }
 
     const insertPlaylistTrack = db.prepare('INSERT INTO playlist_tracks (id, playlist_id, track_id, position, added_by, added_at) VALUES (?, ?, ?, ?, ?, ?)')

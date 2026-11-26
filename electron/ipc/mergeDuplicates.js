@@ -1,8 +1,7 @@
 const fs = require('fs')
 const path = require('path')
 const { randomUUID } = require('crypto')
-const { isInside, moveToTrash, forgetDownloads } = require('./trackFiles')
-const { configuredMusicRoots } = require('../libraryFolder')
+const { isInside, moveToTrash, forgetDownloads, authorizedRoots, sidecarsFor } = require('./trackFiles')
 
 const isVirtual = file => !file || /^(ghost|stream):\/\//.test(file)
 const realPath = file => {
@@ -13,6 +12,7 @@ const realPath = file => {
   }
 }
 const pathKey = file => file && (process.platform === 'win32' ? file.toLowerCase() : file)
+const withSuppressed = (db, fn) => typeof db._withLinkSuppressed === 'function' ? db._withLinkSuppressed(fn) : fn()
 const availableFile = track => {
   try { const file = realPath(track.file_path); return !!file && fs.statSync(file).isFile() }
   catch { return false }
@@ -25,15 +25,17 @@ async function mergeDuplicates(db, keepId, removeIds) {
   const unchangedFileIds = []
   const preservedOutsideFiles = []
   let losers
+  let loserSnapshots = []
   try {
     if (!Array.isArray(removeIds) || removeIds.includes(keepId)) throw new Error('Choose a different copy to remove.')
     const winner = db.prepare('SELECT * FROM tracks WHERE id = ?').get(keepId)
     if (!winner) throw new Error('The copy to keep no longer exists. Refresh the duplicate list.')
     losers = [...new Set(removeIds)].map(id => db.prepare('SELECT * FROM tracks WHERE id = ?').get(id))
     if (losers.some(track => !track)) throw new Error('A copy no longer exists. Refresh the duplicate list.')
+    loserSnapshots = require('../link/trackLifecycle').snapshot(db, losers.map(track => track.id))
     const winnerFile = realPath(winner.file_path)
     const winnerHasFile = winnerFile && fs.statSync(winnerFile).isFile()
-    const roots = configuredMusicRoots(db)
+    const roots = authorizedRoots(db)
     const files = new Map()
     for (const loser of losers) {
       const file = loser.file_path
@@ -64,7 +66,7 @@ async function mergeDuplicates(db, keepId, removeIds) {
         throw new Error('A duplicate shares its audio file with another library entry. No files were removed.')
       }
     }
-    db.transaction(() => {
+    db.transaction(() => withSuppressed(db, () => {
       for (const loser of losers) {
         for (const field of ['artwork_path', 'album', 'year', 'genre']) {
           if (!winner[field] && loser[field]) {
@@ -91,7 +93,7 @@ async function mergeDuplicates(db, keepId, removeIds) {
       if (files.size && !availableFile(winner)) {
         throw new Error('The copy to keep disappeared during the merge. No duplicate audio was discarded. Refresh the duplicate list.')
       }
-    })()
+    }))()
   } catch (error) {
     const unrestored = []
     for (const { file, temporary } of staged.reverse()) {
@@ -112,9 +114,17 @@ async function mergeDuplicates(db, keepId, removeIds) {
       : error.message }
   }
   forgetDownloads(losers.map(track => track.id))
+  try {
+    const survivor = db.prepare('SELECT * FROM tracks WHERE id=?').get(keepId)
+    require('../link/trackLifecycle').appendDeduplicate(db, survivor, loserSnapshots)
+    await db._linkStore?.flushPendingTrash()
+  } catch {}
   const failed = []
-  for (const { temporary } of staged) {
+  for (const { file, temporary } of staged) {
+    let sidecars = []
+    try { sidecars = await sidecarsFor(db, file) } catch {}
     try { await moveToTrash(temporary) } catch { failed.push(temporary) }
+    for (const sidecar of sidecars) { try { await moveToTrash(sidecar) } catch {} }
   }
   const warnings = []
   if (preservedOutsideFiles.length) warnings.push(

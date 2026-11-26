@@ -193,7 +193,8 @@ function safeName(s) {
 function refile(filePath, { artist, title, album, outputDir }) {
   const ext = path.extname(filePath)
   const dir = outputDir && artist ? path.join(outputDir, safeName(artist), safeName(album) || 'Singles') : path.dirname(filePath)
-  let target = path.join(dir, `${safeName(title) || path.basename(filePath, ext)}${ext}`)
+  const bareName = name => require('../transferArtifacts').cleanTransferStem(name)
+  let target = path.join(dir, `${bareName(safeName(title) || path.basename(filePath, ext))}${ext}`)
   if (target === filePath) return filePath
   for (let n = 1; fs.existsSync(target) && n < 50; n++) target = path.join(dir, `${safeName(title)} (${n})${ext}`)
   try {

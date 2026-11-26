@@ -1,5 +1,6 @@
 const path = require('node:path')
 const { link } = require('node:fs/promises')
+const { cleanTransferStem, cleanTransferMetadata } = require('../electron/transferArtifacts')
 
 function sanitizeStem(value) {
   return Array.from(String(value ?? '').normalize('NFC')
@@ -16,7 +17,7 @@ function phoneFileName({ originalFilename, artist, title, extension }) {
     const leaf = originalFilename.replace(/\\/g, '/').split('/').pop() || '';
     const lastDot = leaf.lastIndexOf('.');
     if (lastDot > 0 && leaf.slice(lastDot + 1).toLowerCase() === ext) {
-      const proposed = sanitizeStem(leaf.slice(0, lastDot));
+      const proposed = sanitizeStem(cleanTransferStem(sanitizeStem(leaf.slice(0, lastDot))));
       // Temporary/staging filenames are identifiers, not user-facing names.
       if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(proposed)) {
         stem = proposed;
@@ -24,8 +25,9 @@ function phoneFileName({ originalFilename, artist, title, extension }) {
     }
   }
   if (!stem) {
-    const safeArtist = sanitizeStem(artist) || 'Unknown Artist';
-    const safeTitle = sanitizeStem(title) || 'Unknown Track';
+    const cleaned = cleanTransferMetadata({ title, artist });
+    const safeArtist = sanitizeStem(cleaned.artist) || 'Unknown Artist';
+    const safeTitle = sanitizeStem(cleaned.title) || 'Unknown Track';
     stem = sanitizeStem(`${safeArtist} - ${safeTitle}`);
   }
   if (!stem) stem = 'Track';
