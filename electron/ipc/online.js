@@ -1044,7 +1044,7 @@ function registerStreamProtocol(protocol, net) {
         if (!source) return new Response('Phone track is unavailable. Reconnect and sync the mobile library.', { status: 404 })
         const headers = {}
         const range = request.headers.get('Range')
-        if (range && /^bytes=\\d*-\\d*$/.test(range)) headers.Range = range
+        if (range && /^bytes=[0-9]*-[0-9]*$/.test(range)) headers.Range = range
         const controller = new AbortController()
         request.signal?.addEventListener?.('abort', () => controller.abort(), { once: true })
         const response = await net.fetch(source, {
