@@ -80,7 +80,7 @@ function createLink({ server, db, remote, enabled = () => true, advertiseDesktop
     sockets.set(device.id,socket)
     socket.alive=true
     socket.on('pong',()=>{socket.alive=true})
-    send(socket,'hello',{desktopId:store.deviceId,name:os.hostname(),platform:process.platform,user:{id:device.user_id},proto:1,capabilities:['remote','handoff','history','library','theme','track_lifecycle'],syncPreview:{history:db.prepare('SELECT COUNT(*) n FROM history_events WHERE user_id=?').get(device.user_id).n,operations:db.prepare('SELECT COUNT(*) n FROM library_ops WHERE user_id=?').get(device.user_id).n}})
+    send(socket,'hello',{desktopId:store.deviceId,name:os.hostname(),platform:process.platform,user:{id:device.user_id},proto:1,capabilities:['remote','handoff','history','library','theme','track_lifecycle','mobile_catalog'],syncPreview:{history:db.prepare('SELECT COUNT(*) n FROM history_events WHERE user_id=?').get(device.user_id).n,operations:db.prepare('SELECT COUNT(*) n FROM library_ops WHERE user_id=?').get(device.user_id).n}})
     send(socket,'state',{...remote.getRemoteState(),target:'desktop'})
     send(socket,'theme',desktopTheme())
     socket.on('message',async raw => {
