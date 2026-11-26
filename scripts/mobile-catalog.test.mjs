@@ -18,7 +18,8 @@ function fixture() {
     CREATE TABLE tracks (
       id TEXT PRIMARY KEY, file_path TEXT UNIQUE, file_hash TEXT, title TEXT,
       artist TEXT, album TEXT, duration REAL, source_ref TEXT, artwork_url TEXT,
-      download_source TEXT
+      download_source TEXT, album_artist TEXT, track_num INTEGER,
+      disc_num INTEGER, year INTEGER, genre TEXT
     );
   `)
   const store = {
@@ -39,7 +40,7 @@ function fixture() {
   return { db, page }
 }
 
-const song = { title: 'Affection', artist: 'Boys Noize, ABRA', album: 'Affection', duration: 180 }
+const song = { title: 'Affection', artist: 'Boys Noize, ABRA', album: 'Affection', album_artist: 'Boys Noize', track_num: 2, disc_num: 1, year: 2024, genre: 'Electronic', duration: 180 }
 
 test('mobile-only songs become streamable metadata rows and repeated snapshots do not duplicate them', () => {
   const f = fixture()
