@@ -911,6 +911,9 @@ export default function LyricsPanel({
         style={{
           scrollbarWidth: 'none',
           msOverflowStyle: 'none',
+          // Prevent Chromium scroll anchoring from shifting scrollTop while a
+          // collapsing break row shrinks above the focused lyric line.
+          overflowAnchor: 'none',
           // The sidebar has no empty space after the last line, so its closing
           // lines light up near the bottom edge -- keep the fade there short
           // enough not to dim them.
