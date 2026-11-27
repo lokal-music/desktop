@@ -8,6 +8,7 @@ import { api } from '../api'
 import { isWindowHidden, onWindowVisibility } from '../windowVisibility'
 import { useLyricSubline } from '../lyrics/useLyricSubline'
 import { sublineStatusNotice } from '../lyrics/sublineNotice.mjs'
+import { collapsingGapHeights, focusedScrollTarget } from '../lyrics/scrollTarget.mjs'
 import { announceLyricsChanged } from '../lyricLine'
 import { activeSupportingVocalIndex } from '../lyrics/supportingVocals.mjs'
 import { isStationTrack, lyricsTrackFor, stationClockUnknown, stationSongTime } from '../radio/stations'
@@ -681,7 +682,7 @@ export default function LyricsPanel({
   // edge fade) rather than a third of the way down; the line being sung
   // settles at anchorFraction once the song gets there.
   const FULLSCREEN_TOP = { height: '10%', minHeight: '4.5rem' }
-  const scrollToFocus = useCallback((instant, distanceFraction = 1) => {
+  const scrollToFocus = useCallback((instant) => {
     const container = containerRef.current
     const refs = rowsRef.current.get(focusIdx)
     if (!container || !refs?.rowEl) return
@@ -689,10 +690,20 @@ export default function LyricsPanel({
     // at the anchor (the sidebar keeps no empty space after the last line), so
     // clamp to how far it can actually go. The last lines then simply light up
     // lower down the panel instead of the list trying to move.
-    const maxScroll = Math.max(0, container.scrollHeight - container.clientHeight)
-    const fullTarget = Math.min(maxScroll, Math.max(0, refs.rowEl.offsetTop - container.clientHeight * anchorFraction))
+    // Also subtract any collapsing break rows above the focused line: at the
+    // moment focus leaves a break, its CSS height transition hasn't shrunk yet,
+    // so scrolling to the uncollapsed offsetTop would double-displace the next
+    // line upward and clip it out of the top of the viewport.
+    const collapsing = collapsingGapHeights(lines, rowsRef.current, focusIdx)
+    const target = focusedScrollTarget({
+      rowOffsetTop: refs.rowEl.offsetTop,
+      clientHeight: container.clientHeight,
+      scrollHeight: container.scrollHeight,
+      anchorFraction,
+      collapsingAbove: collapsing.above,
+      collapsingTotal: collapsing.total,
+    })
     const before = container.scrollTop
-    const target = before + (fullTarget - before) * distanceFraction
     if (Math.abs(target - before) < 1) return
     if (instant || Math.abs(target - before) > container.clientHeight * 1.5) {
       container.scrollTop = target
@@ -721,14 +732,13 @@ export default function LyricsPanel({
       rowEl.style.transition = `transform ${SCROLL_MS}ms ${EASE} ${Math.round(steps * STAGGER_FRACTION * SCROLL_MS)}ms`
       rowEl.style.transform = ''
     })
-  }, [focusIdx, anchorFraction])
+  }, [focusIdx, anchorFraction, lines])
 
-  // When a focused three-dot break collapses, its height changes throughout a
-  // CSS transition. Re-align after that final layout shift so the next lyric
-  // line doesn't get clipped at the top of the scroll viewport.
+  // When a focused three-dot break finishes collapsing, re-align if any
+  // subpixel rounding or scroll clamping left the focused line off-anchor.
   const handleGapCollapse = useCallback(() => {
     if (focusIdx < 0 || browsing) return
-    scrollToFocus(true, 0.75)
+    scrollToFocus(true)
   }, [focusIdx, browsing, scrollToFocus])
 
   useLayoutEffect(() => {
