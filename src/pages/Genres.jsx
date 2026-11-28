@@ -5,54 +5,119 @@ import { ArrowLeft, Music, Play, Search, Shuffle, Tags } from 'lucide-react'
 import { api } from '../api'
 import { usePlayerStore } from '../store/player'
 import { peekCache, writeCache, usePageReady } from '../pageCache'
-import FadeImg from '../components/FadeImg'
-import CoverPlay from '../components/CoverPlay'
+import { PlayGlyph } from '../components/CoverPlay'
 import { plural } from '../plural'
 import { useTranslation } from '../i18n'
 import TrackList from '../components/TrackList'
-import { isPlayable, trackArtURL } from '../onlineTracks'
+import { isPlayable } from '../onlineTracks'
 import { fetchAllTrackPages, shuffledLibraryTracks } from '../libraryHelpers'
+import { GENRE_FOREGROUND, genreGradient, genreToneFor } from '../genrePalette'
 
 // Songs without any genre, as a genre of its own (see genreFilter in
 // electron/ipc/scanner.js).
 export const NO_GENRE = '__none__'
 
 const genrePath = name => `/genre/${encodeURIComponent(name)}`
-const artURL = item => (api.isElectron ? `file://${item.artwork_path}` : api.artworkURL(item.track_id))
 
-/** Up to four covers of the genre's songs, as a square. */
-function GenreCover({ artworks }) {
-  if (!artworks?.length) {
-    return <div className="flex h-full w-full items-center justify-center"><Tags size={34} className="text-muted" /></div>
-  }
-  if (artworks.length < 4) return <FadeImg src={artURL(artworks[0])} alt="" className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]" />
+/** Material Rounded 24x24 icon paths matching mobile's LokalGenrePalette. */
+const GENRE_ICON_PATHS = {
+  graphic_eq: 'M8 18c.55 0 1-.45 1-1V7c0-.55-.45-1-1-1s-1 .45-1 1v10c0 .55.45 1 1 1zm4 4c.55 0 1-.45 1-1V3c0-.55-.45-1-1-1s-1 .45-1 1v18c0 .55.45 1 1 1zm-8-8c.55 0 1-.45 1-1v-2c0-.55-.45-1-1-1s-1 .45-1 1v2c0 .55.45 1 1 1zm12 4c.55 0 1-.45 1-1V7c0-.55-.45-1-1-1s-1 .45-1 1v10c0 .55.45 1 1 1zm3-7v2c0 .55.45 1 1 1s1-.45 1-1v-2c0-.55-.45-1-1-1s-1 .45-1 1z',
+  music_note: 'M12 5v8.55c-.94-.54-2.1-.75-3.33-.32-1.34.48-2.37 1.67-2.61 3.07-.46 2.74 1.86 5.08 4.59 4.65 1.96-.31 3.35-2.11 3.35-4.1V7h2c1.1 0 2-.9 2-2s-.9-2-2-2h-2c-1.1 0-2 .9-2 2z',
+  album: 'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 14.5c-2.49 0-4.5-2.01-4.5-4.5S9.51 7.5 12 7.5s4.5 2.01 4.5 4.5-2.01 4.5-4.5 4.5zm0-5.5c-.55 0-1 .45-1 1s.45 1 1 1 1-.45 1-1-.45-1-1-1z',
+  audiotrack: 'M12 5v8.55c-.94-.54-2.1-.75-3.33-.32-1.34.48-2.37 1.67-2.61 3.07-.46 2.74 1.86 5.08 4.59 4.65 1.96-.31 3.35-2.11 3.35-4.1V7h2c1.1 0 2-.9 2-2s-.9-2-2-2h-2c-1.1 0-2 .9-2 2z',
+  music_video: 'M21 3H3c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-1 16H4c-.55 0-1-.45-1-1V6c0-.55.45-1 1-1h16c.55 0 1 .45 1 1v12c0 .55-.45 1-1 1zM8.05 15.54C7.72 13.79 9.1 12.1 10.9 12c.39-.02.77.04 1.1.16V7.85c0-.47.38-.85.85-.85h2.3c.47 0 .85.38.85.85v.3c0 .47-.38.85-.85.85H13v6.5c0 1.54-1.39 2.76-2.99 2.45-1.01-.2-1.78-1.01-1.96-2.41z',
+  piano: 'M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-6 11.5h.25V19h-2.5v-4.5H11c.55 0 1-.45 1-1V5h2v8.5c0 .55-.45 1-1 1zM5 5h2v8.5c0 .55.45 1 1 1h.25V19H5V5zm14 14h-3.25v-4.5H16c.55 0 1-.45 1-1V5h2v14z',
+  headphones: 'M12 3a9 9 0 0 0-9 9v7c0 1.1.9 2 2 2h2c1.1 0 2-.9 2-2v-4c0-1.1-.9-2-2-2H5v-1c0-3.87 3.13-7 7-7s7 3.13 7 7v1h-2c-1.1 0-2 .9-2 2v4c0 1.1.9 2 2 2h2c1.1 0 2-.9 2-2v-7a9 9 0 0 0-9-9z',
+  equalizer: 'M12 20c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2s-2 .9-2 2v12c0 1.1.9 2 2 2zm-6 0c1.1 0 2-.9 2-2v-4c0-1.1-.9-2-2-2s-2 .9-2 2v4c0 1.1.9 2 2 2zm10-9v7c0 1.1.9 2 2 2s2-.9 2-2v-7c0-1.1-.9-2-2-2s-2 .9-2 2z',
+  library_music: 'M20 2H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-2 5h-3v5.5a2.5 2.5 0 0 1-5 0 2.5 2.5 0 0 1 2.5-2.5c.57 0 1.08.19 1.5.51V6c0-.55.45-1 1-1h3c.55 0 1 .45 1 1s-.45 1-1 1zM3 6c-.55 0-1 .45-1 1v13c0 1.1.9 2 2 2h13c.55 0 1-.45 1-1s-.45-1-1-1H5c-.55 0-1-.45-1-1V7c0-.55-.45-1-1-1z',
+  radio: 'M3.24 6.15C2.51 6.43 2 7.17 2 8v12c0 1.1.89 2 2 2h16c1.11 0 2-.9 2-2V8c0-1.1-.9-2-2-2H8.3l7.43-3c.46-.19.68-.71.49-1.17-.19-.46-.71-.68-1.17-.49L3.24 6.15zM7 20c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm13-8h-2v-1c0-.55-.45-1-1-1s-1 .45-1 1v1H4V9c0-.55.45-1 1-1h14c.55 0 1 .45 1 1v3z',
+  queue_music: 'M14 6H4c-.55 0-1 .45-1 1s.45 1 1 1h10c.55 0 1-.45 1-1s-.45-1-1-1zm0 4H4c-.55 0-1 .45-1 1s.45 1 1 1h10c.55 0 1-.45 1-1s-.45-1-1-1zM4 16h6c.55 0 1-.45 1-1s-.45-1-1-1H4c-.55 0-1 .45-1 1s.45 1 1 1zm15-10h-1c-.55 0-1 .45-1 1v6.18c-.31-.11-.65-.18-1-.18-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3V8h2c.55 0 1-.45 1-1s-.45-1-1-1h-2z',
+}
+
+/** Semantic chromatic cover matching mobile's _LokalGenreCard surface. */
+function GenreCover({ name, compact = false, children }) {
+  const tone = genreToneFor(name)
+  const iconPath = GENRE_ICON_PATHS[tone.icon] || GENRE_ICON_PATHS.music_note
   return (
-    <div className="grid h-full w-full grid-cols-2 grid-rows-2 transition-transform duration-300 group-hover:scale-[1.03]">
-      {artworks.slice(0, 4).map(item => <FadeImg key={item.track_id} src={artURL(item)} alt="" className="h-full w-full object-cover" />)}
+    <div
+      className="relative h-full w-full overflow-hidden"
+      style={{ backgroundImage: genreGradient(tone) }}
+    >
+      <svg
+        viewBox="0 0 24 24"
+        aria-hidden="true"
+        className="pointer-events-none absolute transition-transform duration-300 group-hover:scale-[1.04]"
+        style={{
+          right: compact ? -14 : -25,
+          bottom: compact ? -18 : -31,
+          width: compact ? 76 : 126,
+          height: compact ? 76 : 126,
+          rotate: '-0.18rad',
+          color: 'rgba(255, 255, 255, 0.19)',
+        }}
+      >
+        <path d={iconPath} fill="currentColor" />
+      </svg>
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute left-[1px] right-[1px] top-[1px] h-[1px]"
+        style={{ backgroundColor: 'rgba(255, 255, 255, 0.21)' }}
+      />
+      {children}
     </div>
   )
 }
 
-function GenreCard({ name, label, count, artworks, onOpen, onPlay }) {
+function GenreCard({ label, count, onOpen, onPlay }) {
   const { t } = useTranslation()
-  const first = artworks?.[0]
+  const tone = genreToneFor(label)
   return (
-    <motion.div initial={false} whileHover={{ y: -3 }}
-      className="group overflow-hidden rounded-[1.5rem] border border-border bg-card/60 transition-colors hover:border-accent/35"
-      style={{ contentVisibility: 'auto', containIntrinsicSize: '320px' }}>
-      <div className="relative aspect-square overflow-hidden bg-black/20">
-        <GenreCover artworks={artworks} />
-        <CoverPlay label={t('Play {name}', { name: label })} onPlay={onPlay} />
-      </div>
-      <button type="button" onClick={onOpen} className="group/open relative block w-full overflow-hidden px-4 py-3 text-left">
-        <div className="absolute inset-0 scale-110 blur-xl"
-          style={{ backgroundImage: first ? `url("${artURL(first)}")` : 'none', backgroundPosition: 'center', backgroundSize: 'cover', opacity: first ? 0.18 : 0 }} />
-        <div className="absolute inset-0 bg-black/35" />
-        <div className="relative space-y-1">
-          <p className="truncate text-sm font-medium text-white decoration-white/60 underline-offset-2 group-hover/open:underline" title={label}>{label}</p>
-          <p className="text-[11px] uppercase leading-snug tracking-[0.16em] text-muted/70">{plural(count, 'track')}</p>
-        </div>
-      </button>
+    <motion.div
+      initial={false}
+      whileHover={{ y: -3 }}
+      className="group relative aspect-[1/0.91] overflow-hidden rounded-[1.5rem] shadow-[0_8px_24px_rgba(0,0,0,0.22)]"
+      style={{ contentVisibility: 'auto', containIntrinsicSize: '220px' }}
+    >
+      <GenreCover name={label}>
+        <button
+          type="button"
+          onClick={onOpen}
+          aria-label={`${label}, ${plural(count, 'track')}`}
+          className="relative flex h-full w-full flex-col items-start justify-between px-4 pb-3.5 pt-4 pr-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-white/70 focus-visible:ring-inset"
+        >
+          <p
+            title={label}
+            className={`line-clamp-3 text-[22px] font-extrabold leading-[1.06] tracking-[-0.03em] ${tone.italic ? 'italic' : ''}`}
+            style={{ color: GENRE_FOREGROUND }}
+          >
+            {label}
+          </p>
+          <span
+            className="inline-flex max-w-full items-center truncate rounded-[30px] px-2.5 py-[5px] text-[11px] font-bold leading-none"
+            style={{
+              backgroundColor: 'rgba(255, 255, 255, 0.13)',
+              border: '1px solid rgba(255, 255, 255, 0.22)',
+              color: GENRE_FOREGROUND,
+            }}
+          >
+            {plural(count, 'track')}
+          </span>
+        </button>
+        <button
+          type="button"
+          aria-label={t('Play {name}', { name: label })}
+          title={t('Play {name}', { name: label })}
+          onClick={(event) => { event.stopPropagation(); onPlay?.(event) }}
+          className="absolute bottom-3 right-3 flex h-10 w-10 items-center justify-center rounded-full opacity-0 shadow-[0_6px_18px_rgba(0,0,0,0.35)] backdrop-blur-md outline-none transition duration-200 hover:scale-105 active:scale-95 group-hover:opacity-100 focus-visible:opacity-100"
+          style={{
+            backgroundColor: 'rgba(0, 0, 0, 0.34)',
+            border: '1px solid rgba(255, 255, 255, 0.24)',
+            color: GENRE_FOREGROUND,
+          }}
+        >
+          <PlayGlyph className="h-5 w-5 translate-x-[0.5px]" />
+        </button>
+      </GenreCover>
     </motion.div>
   )
 }
@@ -121,11 +186,11 @@ export default function Genres() {
 
         <div className="grid grid-cols-2 gap-4 @sm:grid-cols-3 @lg:grid-cols-4 @xl:grid-cols-5 @2xl:grid-cols-6">
           {shown.map(item => (
-            <GenreCard key={item.name} name={item.name} label={item.name} count={item.count} artworks={item.artworks}
+            <GenreCard key={item.name} label={item.name} count={item.count}
               onOpen={() => navigate(genrePath(item.name))} onPlay={() => play(item.name)} />
           ))}
           {showNoGenre && (
-            <GenreCard name={NO_GENRE} label={t('No genre')} count={noGenre} artworks={[]}
+            <GenreCard label={t('No genre')} count={noGenre}
               onOpen={() => navigate(genrePath(NO_GENRE))} onPlay={() => play(NO_GENRE)} />
           )}
         </div>
@@ -180,20 +245,8 @@ export function GenreTracks() {
       </button>
 
       <div className="flex items-end gap-4">
-        <div className="h-28 w-28 flex-shrink-0 overflow-hidden rounded-2xl border border-border bg-elevated shadow-xl">
-          {tracks.length > 0 ? (
-            tracks.length < 4 ? (
-              trackArtURL(tracks[0]) ? <FadeImg src={trackArtURL(tracks[0])} alt="" className="h-full w-full object-cover" /> : <div className="flex h-full w-full items-center justify-center"><Music size={36} className="text-muted" /></div>
-            ) : (
-              <div className="grid h-full w-full grid-cols-2 grid-rows-2">
-                {tracks.slice(0, 4).map(track => (
-                  trackArtURL(track)
-                    ? <FadeImg key={track.id} src={trackArtURL(track)} alt="" className="h-full w-full object-cover" />
-                    : <div key={track.id} className="flex items-center justify-center"><Music size={20} className="text-muted" /></div>
-                ))}
-              </div>
-            )
-          ) : <div className="flex h-full w-full items-center justify-center"><Tags size={36} className="text-muted" /></div>}
+        <div className="h-28 w-28 flex-shrink-0 overflow-hidden rounded-3xl shadow-xl">
+          <GenreCover name={title} compact />
         </div>
         <div className="min-w-0 flex-1">
           <p className="mb-1 text-xs font-display uppercase tracking-widest text-muted">{t('Genre playlist')}</p>
